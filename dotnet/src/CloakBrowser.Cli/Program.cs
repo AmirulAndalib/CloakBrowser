@@ -97,6 +97,7 @@ static void PrintDiagnostics(Dictionary<string, object?> diag)
 {
     var env = (Dictionary<string, object?>)diag["environment"]!;
     Console.WriteLine("CloakBrowser diagnostics");
+    Console.WriteLine($"Wrapper:   {env["wrapper"]}");
     Console.WriteLine($".NET:      {env["dotnet"]}");
     Console.WriteLine($"OS:        {env["os"]} {env["arch"]}");
     Console.WriteLine($"Platform:  {env.GetValueOrDefault("platform_tag") ?? "unknown"}");

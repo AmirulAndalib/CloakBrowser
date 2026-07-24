@@ -22,6 +22,7 @@ import {
   normalizeRequestedVersion,
   versionNewer,
   CHROMIUM_VERSION,
+  WRAPPER_VERSION,
 } from "./config.js";
 import { countFontsPresent, WINDOWS_FONT_TELLS, OFFICE_FONT_TELLS } from "./fonts.js";
 import { resolveLicenseKey, validateLicense, getProLatestRelease, getActiveSessionCount, type LicenseInfo } from "./license.js";
@@ -201,6 +202,7 @@ export async function collectDiagnostics(quick: boolean): Promise<Record<string,
   const diag: Record<string, any> = {};
 
   diag.environment = {
+    wrapper: WRAPPER_VERSION,
     node: process.version,
     os: os.type(),
     arch: os.arch(),
@@ -277,6 +279,7 @@ export async function collectDiagnostics(quick: boolean): Promise<Record<string,
 function printDiagnostics(diag: Record<string, any>): void {
   const env = diag.environment;
   console.log("CloakBrowser diagnostics");
+  console.log(`Wrapper:   ${env.wrapper}`);
   console.log(`Node:      ${env.node}`);
   console.log(`OS:        ${env.os} ${env.arch}`);
   console.log(`Platform:  ${env.platform_tag ?? "unknown"}`);

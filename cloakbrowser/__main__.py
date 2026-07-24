@@ -207,7 +207,10 @@ def _collect_diagnostics(quick: bool) -> dict:
     """Gather environment + binary diagnostics without triggering a download."""
     diag: dict = {}
 
+    from ._version import __version__
+
     diag["environment"] = {
+        "wrapper": __version__,
         "python": sys.version.split()[0],
         "os": platform.system(),
         "arch": platform.machine(),
@@ -297,6 +300,7 @@ def _print_diagnostics(diag: dict) -> None:
     """Render the diagnostics dict as a human-readable report."""
     env = diag["environment"]
     print("CloakBrowser diagnostics")
+    print(f"Wrapper:   {env['wrapper']}")
     print(f"Python:    {env['python']}")
     print(f"OS:        {env['os']} {env['arch']}")
     print(f"Platform:  {env.get('platform_tag', 'unknown')}")

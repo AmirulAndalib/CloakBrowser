@@ -16,6 +16,7 @@ internal static class Diagnostics
 
         var env = new Dictionary<string, object?>
         {
+            ["wrapper"] = CloakVersion.Version,
             ["dotnet"] = RuntimeInformation.FrameworkDescription,
             ["os"] = RuntimeInformation.OSDescription,
             ["arch"] = RuntimeInformation.OSArchitecture.ToString(),

@@ -33,10 +33,13 @@ class TestResolveLicenseKey:
         with patch.dict(os.environ, {"CLOAKBROWSER_LICENSE_KEY": "env-key"}):
             assert resolve_license_key() == "env-key"
 
-    def test_returns_none_when_absent(self):
+    def test_returns_none_when_absent(self, tmp_path):
+        # Clearing the env drops CLOAKBROWSER_CACHE_DIR too, so the lookup would
+        # fall back to the real ~/.cloakbrowser — patch the dir it reads.
         with patch.dict(os.environ, {}, clear=True):
             os.environ.pop("CLOAKBROWSER_LICENSE_KEY", None)
-            assert resolve_license_key() is None
+            with patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path):
+                assert resolve_license_key() is None
 
     def test_empty_string_param_uses_env(self):
         with patch.dict(os.environ, {"CLOAKBROWSER_LICENSE_KEY": "env-key"}):

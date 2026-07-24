@@ -56,8 +56,16 @@ describe("config", () => {
   });
 
   it("getCacheDir returns ~/.cloakbrowser by default", () => {
-    const dir = getCacheDir();
-    expect(dir).toContain(".cloakbrowser");
+    // tests/setup.ts points the cache dir at a temp dir for isolation; drop it
+    // here to exercise the real default.
+    const prev = process.env.CLOAKBROWSER_CACHE_DIR;
+    delete process.env.CLOAKBROWSER_CACHE_DIR;
+    try {
+      expect(getCacheDir()).toContain(".cloakbrowser");
+    } finally {
+      if (prev === undefined) delete process.env.CLOAKBROWSER_CACHE_DIR;
+      else process.env.CLOAKBROWSER_CACHE_DIR = prev;
+    }
   });
 
   it("getBinaryDir includes platform version", () => {

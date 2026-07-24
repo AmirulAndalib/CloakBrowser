@@ -1,6 +1,7 @@
 """Unit tests for the cloakbrowser CLI diagnostics (`info` / `doctor`)."""
 
 import json
+import os
 import sys
 from argparse import Namespace
 from unittest.mock import patch
@@ -8,7 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from cloakbrowser.__main__ import _binary_version, cmd_info
-from cloakbrowser.license import LicenseInfo
+from cloakbrowser.license import LicenseInfo, ProReleaseInfo
 
 
 def _run(args, *, key=None, license_info=None, sessions=None):
@@ -71,7 +72,8 @@ def test_valid_key_reports_pro_binary(capsys):
     valid = LicenseInfo(valid=True, plan="business", expires=None)
     # quick=False: the server latest lookup is skipped under --quick (network-free),
     # so exercise the full path to see latest_version populated.
-    with patch("cloakbrowser.license.get_pro_latest_version", return_value="148.0.0.0"):
+    release = ProReleaseInfo("148.0.0.0", "stable", "stable", False)
+    with patch("cloakbrowser.license.get_pro_latest_release", return_value=release):
         _run(Namespace(quick=False, json=True), key="cb_test", license_info=valid)
     data = json.loads(capsys.readouterr().out)
     assert data["binary"]["tier"] == "pro"
@@ -85,12 +87,24 @@ def test_quick_skips_pro_latest_lookup(capsys):
     """--quick keeps `info` network-free: no server latest-version lookup for Pro."""
     valid = LicenseInfo(valid=True, plan="business", expires=None)
     with patch(
-        "cloakbrowser.license.get_pro_latest_version", return_value="148.0.0.0"
+        "cloakbrowser.license.get_pro_latest_release",
+        return_value=ProReleaseInfo("148.0.0.0", "stable", "stable", False),
     ) as mock_latest:
         _run(Namespace(quick=True, json=True), key="cb_test", license_info=valid)
     data = json.loads(capsys.readouterr().out)
     mock_latest.assert_not_called()
     assert data["binary"]["latest_version"] is None
+
+
+def test_info_reports_preview_stable_fallback(capsys):
+    valid = LicenseInfo(valid=True, plan="business", expires=None)
+    release = ProReleaseInfo("150.0.7871.114.3", "preview", "stable", True)
+    with (
+        patch.dict(os.environ, {"CLOAKBROWSER_RELEASE_CHANNEL": "preview"}),
+        patch("cloakbrowser.license.get_pro_latest_release", return_value=release),
+    ):
+        _run(Namespace(quick=False, json=False), key="cb_test", license_info=valid)
+    assert "Channel:   Preview → Stable fallback" in capsys.readouterr().out
 
 
 def test_invalid_key_falls_back_to_free(capsys):

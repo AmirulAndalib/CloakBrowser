@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import {
   resolveLicenseKey,
   validateLicense,
+  getProLatestRelease,
   getProLatestVersion,
   getActiveSessionCount,
   buildLaunchEnv,
@@ -28,9 +29,12 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  delete process.env.CLOAKBROWSER_RELEASE_CHANNEL;
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
-  } catch {}
+  } catch (error) {
+    console.error(`Failed to remove test directory ${tmpDir}:`, error);
+  }
 });
 
 // ── resolveLicenseKey ─────────────────────────────────
@@ -283,6 +287,113 @@ describe("getProLatestVersion", () => {
     expect(version).toBe("147.0.1234.5");
   });
 
+  it("uses an isolated endpoint and marker for preview", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        version: "150.0.7871.114.3",
+        requested_channel: "preview",
+        resolved_channel: "stable",
+        fallback: true,
+      }),
+    } as Response);
+
+    const release = await getProLatestRelease("preview");
+
+    expect(release).toEqual({
+      version: "150.0.7871.114.3",
+      requestedChannel: "preview",
+      resolvedChannel: "stable",
+      fallback: true,
+    });
+    expect(fetchSpy.mock.calls[0]![0]).toBe(
+      "https://cloakbrowser.dev/api/download/version?channel=preview",
+    );
+    expect(
+      fs.readFileSync(
+        path.join(tmpDir, `.last_pro_version_check_preview_${config.getPlatformTag()}`),
+        "utf-8",
+      ),
+    ).toBe("150.0.7871.114.3");
+    expect(
+      fs.existsSync(path.join(tmpDir, `.last_pro_version_check_${config.getPlatformTag()}`)),
+    ).toBe(false);
+    const resolution = JSON.parse(fs.readFileSync(
+      path.join(tmpDir, `.last_pro_version_resolution_preview_${config.getPlatformTag()}`),
+      "utf-8",
+    ));
+    expect(resolution).toMatchObject({
+      requested_channel: "preview",
+      resolved_channel: "stable",
+      fallback: true,
+    });
+    expect(resolution.requestedChannel).toBeUndefined();
+  });
+
+  it("reports an old server Preview response as Stable fallback", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ version: "150.0.7871.114.3" }),
+    } as Response);
+
+    const release = await getProLatestRelease("preview");
+
+    expect(release?.resolvedChannel).toBe("stable");
+    expect(release?.fallback).toBe(true);
+  });
+
+  it("reads a legacy JavaScript camelCase sidecar", async () => {
+    const platform = config.getPlatformTag();
+    fs.writeFileSync(
+      path.join(tmpDir, `.last_pro_version_check_preview_${platform}`),
+      "150.0.7871.114.3",
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, `.last_pro_version_resolution_preview_${platform}`),
+      JSON.stringify({
+        version: "150.0.7871.114.3",
+        requestedChannel: "preview",
+        resolvedChannel: "stable",
+        fallback: true,
+      }),
+    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    const release = await getProLatestRelease("preview");
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(release?.resolvedChannel).toBe("stable");
+    expect(release?.fallback).toBe(true);
+  });
+
+  it("reads preview from the environment", async () => {
+    process.env.CLOAKBROWSER_RELEASE_CHANNEL = "preview";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ version: "151.0.1234.5" }),
+    } as Response);
+
+    await getProLatestVersion();
+
+    expect(fetchSpy.mock.calls[0]![0]).toBe(
+      "https://cloakbrowser.dev/api/download/version?channel=preview",
+    );
+  });
+
+  it("explicit stable overrides a preview environment", async () => {
+    process.env.CLOAKBROWSER_RELEASE_CHANNEL = "preview";
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ version: "150.0.1234.5" }),
+    } as Response);
+
+    await getProLatestVersion("stable");
+
+    expect(fetchSpy.mock.calls[0]![0]).toBe(
+      "https://cloakbrowser.dev/api/download/version",
+    );
+  });
+
   it("sends X-Platform header", async () => {
     vi.spyOn(config, "getPlatformTag").mockReturnValue("darwin-arm64");
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
@@ -302,6 +413,15 @@ describe("getProLatestVersion", () => {
     vi.spyOn(config, "getPlatformTag").mockReturnValue("darwin-arm64");
     const marker = path.join(tmpDir, ".last_pro_version_check_darwin-arm64");
     fs.writeFileSync(marker, "147.0.1234.5");
+    fs.writeFileSync(
+      path.join(tmpDir, ".last_pro_version_resolution_darwin-arm64"),
+      JSON.stringify({
+        version: "147.0.1234.5",
+        requestedChannel: "stable",
+        resolvedChannel: "stable",
+        fallback: false,
+      }),
+    );
 
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const version = await getProLatestVersion();
@@ -314,6 +434,47 @@ describe("getProLatestVersion", () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network"));
     const version = await getProLatestVersion();
     expect(version).toBeNull();
+  });
+
+  it("offline preview preserves the sidecar channel", async () => {
+    // Stale marker (rate-limit expired) forces the network path; the server is
+    // unreachable, so the offline branch must reuse the resolution sidecar
+    // instead of mislabeling a genuine preview build as a stable fallback.
+    vi.spyOn(config, "getPlatformTag").mockReturnValue("linux-x64");
+    const marker = path.join(tmpDir, ".last_pro_version_check_preview_linux-x64");
+    fs.writeFileSync(marker, "151.0.7900.10.1");
+    fs.writeFileSync(
+      path.join(tmpDir, ".last_pro_version_resolution_preview_linux-x64"),
+      JSON.stringify({
+        version: "151.0.7900.10.1",
+        requestedChannel: "preview",
+        resolvedChannel: "preview",
+        fallback: false,
+      }),
+    );
+    const old = Date.now() / 1000 - 7200; // 2h ago → past the 1h rate-limit window
+    fs.utimesSync(marker, old, old);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network"));
+
+    const release = await getProLatestRelease("preview");
+
+    expect(release?.version).toBe("151.0.7900.10.1");
+    expect(release?.resolvedChannel).toBe("preview");
+    expect(release?.fallback).toBe(false);
+  });
+
+  it("offline preview without a sidecar falls back to stable", async () => {
+    vi.spyOn(config, "getPlatformTag").mockReturnValue("linux-x64");
+    const marker = path.join(tmpDir, ".last_pro_version_check_preview_linux-x64");
+    fs.writeFileSync(marker, "151.0.7900.10.1");
+    const old = Date.now() / 1000 - 7200;
+    fs.utimesSync(marker, old, old);
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network"));
+
+    const release = await getProLatestRelease("preview");
+
+    expect(release?.resolvedChannel).toBe("stable");
+    expect(release?.fallback).toBe(true);
   });
 });
 

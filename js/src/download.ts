@@ -31,10 +31,11 @@ import {
   getFallbackDownloadUrl,
   getLocalBinaryOverride,
   getPlatformTag,
+  normalizeReleaseChannel,
   normalizeRequestedVersion,
   versionNewer,
 } from "./config.js";
-import { resolveLicenseKey, validateLicense, getProLatestVersion } from "./license.js";
+import { resolveLicenseKey, validateLicense, getProLatestVersion, getProLatestRelease } from "./license.js";
 
 const DOWNLOAD_TIMEOUT_MS = 600_000; // 10 minutes
 // Seconds, matching the Python/.NET `.last_update_check` marker format so the
@@ -72,7 +73,11 @@ export class BinaryVerificationError extends Error {
  * Ensure the stealth Chromium binary is available. Download if needed.
  * Returns the path to the chrome executable.
  */
-export async function ensureBinary(licenseKey?: string, browserVersion?: string): Promise<string> {
+export async function ensureBinary(
+  licenseKey?: string,
+  browserVersion?: string,
+  releaseChannel?: string,
+): Promise<string> {
   // Check for local override
   const localOverride = getLocalBinaryOverride();
   if (localOverride) {
@@ -103,7 +108,12 @@ export async function ensureBinary(licenseKey?: string, browserVersion?: string)
       // a routine update never reaches here: ensureProBinary returns the cached
       // Pro binary and updates in the background.)
       try {
-        return await ensureProBinary(effectiveKey, proVersion, info.plan);
+        return await ensureProBinary(
+          effectiveKey,
+          proVersion,
+          info.plan,
+          releaseChannel,
+        );
       } catch (e) {
         // Authenticity could not be confirmed — surface verbatim.
         if (e instanceof BinaryVerificationError) throw e;
@@ -205,13 +215,16 @@ export function clearCache(): void {
  * effectively running the free binary, and the active key may differ from the
  * cached one.
  */
-export function binaryInfo(browserVersion?: string): BinaryInfo {
+export function binaryInfo(
+  browserVersion?: string,
+  releaseChannel?: string,
+): BinaryInfo {
   // browserVersion (or CLOAKBROWSER_VERSION) pins the reported version so the
   // info matches what a pinned launch actually runs, instead of latest.
   const requested = normalizeRequestedVersion(browserVersion);
   // Prefer Pro only if a Pro binary actually exists on disk. getEffectiveVersion
   // returns null for Pro when nothing is cached (it never falls back to free).
-  const proVersion = requested ?? getEffectiveVersion(true);
+  const proVersion = requested ?? getEffectiveVersion(true, releaseChannel);
   const isPro = proBinaryReady(proVersion);
 
   const effective = isPro ? proVersion : (requested ?? getEffectiveVersion(false));
@@ -224,7 +237,9 @@ export function binaryInfo(browserVersion?: string): BinaryInfo {
     binaryPath,
     installed: fs.existsSync(binaryPath),
     cacheDir: getBinaryDir(effective, isPro),
-    downloadUrl: isPro ? `${DOWNLOAD_BASE_URL}/api/download/latest` : getDownloadUrl(effective),
+    downloadUrl: isPro
+      ? `${DOWNLOAD_BASE_URL}/api/download/latest${normalizeReleaseChannel(releaseChannel) === "preview" ? "?channel=preview" : ""}`
+      : getDownloadUrl(effective),
   };
 }
 
@@ -246,16 +261,19 @@ export async function checkForUpdate(): Promise<string | null> {
 }
 
 /**
- * Move a Pro install to the server's latest stable. Blocks until complete.
+ * Move a Pro install to the selected channel's latest. Blocks until complete.
  * Returns the new version when a newer Pro build is downloaded or an
  * already-cached newer build is activated, else null (already up to date or the
  * server could not be reached). Requires a valid Pro license key.
  */
-export async function checkForProUpdate(licenseKey: string): Promise<string | null> {
-  const latest = await getProLatestVersion();
+export async function checkForProUpdate(
+  licenseKey: string,
+  releaseChannel?: string,
+): Promise<string | null> {
+  const latest = await getProLatestVersion(releaseChannel);
   if (!latest) return null;
 
-  const effective = getEffectiveVersion(true);
+  const effective = getEffectiveVersion(true, releaseChannel);
   if (effective && !versionNewer(latest, effective) && proBinaryReady(effective)) {
     // Already on the latest cached Pro build.
     return null;
@@ -271,7 +289,7 @@ export async function checkForProUpdate(licenseKey: string): Promise<string | nu
     }
   }
 
-  writeProVersionMarker(latest);
+  writeProVersionMarker(latest, releaseChannel);
   return latest;
 }
 
@@ -309,6 +327,25 @@ export function welcomeDue(marker: string, pro: boolean): boolean {
  *   "free"    — a free GitHub key (latest binary, one concurrent session)
  *   "keyless" — no key, running the older free binary (invite the free login)
  */
+let previewFallbackWarned = false;
+
+/** @internal Exported for testing only. */
+export function resetPreviewFallbackWarned(): void {
+  previewFallbackWarned = false;
+}
+
+/**
+ * Tell the user, once per process, that a requested Preview build does not exist
+ * for this platform and the Stable build is being used instead.
+ */
+function warnPreviewFallback(): void {
+  if (previewFallbackWarned) return;
+  previewFallbackWarned = true;
+  console.error(
+    `[cloakbrowser] Preview channel requested, but no preview build is available for ${getPlatformTag()}; using the stable build.`,
+  );
+}
+
 function showWelcome(tier = "keyless"): void {
   const marker = path.join(getCacheDir(), ".welcome_shown");
   if (!welcomeDue(marker, tier === "pro")) return;
@@ -718,11 +755,15 @@ function proBinaryReady(version: string | null): version is string {
   return fs.existsSync(p) && isExecutable(p);
 }
 
-/** Atomically write the latest Pro version marker for this platform. */
-function writeProVersionMarker(version: string): void {
+/** Atomically write the selected channel's Pro version marker for this platform. */
+function writeProVersionMarker(version: string, releaseChannel?: string): void {
   const cacheDir = getCacheDir();
   fs.mkdirSync(cacheDir, { recursive: true });
-  const marker = path.join(cacheDir, `latest_pro_version_${getPlatformTag()}`);
+  const channel = normalizeReleaseChannel(releaseChannel);
+  const markerPrefix = channel === "preview"
+    ? "latest_pro_version_preview"
+    : "latest_pro_version";
+  const marker = path.join(cacheDir, `${markerPrefix}_${getPlatformTag()}`);
   const tmp = `${marker}.tmp`;
   fs.writeFileSync(tmp, version);
   fs.renameSync(tmp, marker);
@@ -734,7 +775,8 @@ function writeProVersionMarker(version: string): void {
 async function ensureProBinary(
   licenseKey: string,
   requestedVersion?: string,
-  plan?: string
+  plan?: string,
+  releaseChannel?: string,
 ): Promise<string> {
   // Banner tier: a free GitHub key gets the free banner, paid keys the Pro one.
   const welcomeTier = plan === "free" ? "free" : "pro";
@@ -758,8 +800,8 @@ async function ensureProBinary(
     return p;
   }
 
-  // Unpinned: track the server's latest stable.
-  const effective = getEffectiveVersion(true);
+  // Unpinned: track the server's latest selected channel.
+  const effective = getEffectiveVersion(true, releaseChannel);
 
   // Honor CLOAKBROWSER_AUTO_UPDATE=false the way the free path does: frozen AND a
   // cached Pro build present → keep it, skip the server check. With no cached build
@@ -774,7 +816,16 @@ async function ensureProBinary(
 
   // getProLatestVersion() is rate-limited to one network call per hour and returns
   // a cached string in between, so this foreground check stays cheap steady-state.
-  const latest = await getProLatestVersion();
+  const latest = await getProLatestVersion(releaseChannel);
+
+  // Tell the user when they asked for Preview but the server has no preview build
+  // for this platform, so the Stable build is used instead. The lookup is a cache
+  // hit (getProLatestVersion above already populated it), so this only touches the
+  // network on the once-an-hour refresh.
+  if (normalizeReleaseChannel(releaseChannel) === "preview") {
+    const release = await getProLatestRelease(releaseChannel);
+    if (release?.fallback) warnPreviewFallback();
+  }
 
   // Prefer the server's latest when it is newer than — or replaces a missing —
   // the cached build. Otherwise stay on the cached Pro binary (fast, offline-ok).
@@ -801,7 +852,7 @@ async function ensureProBinary(
     // launch — never a stale marker.
     if (version !== effective) {
       try {
-        writeProVersionMarker(version);
+        writeProVersionMarker(version, releaseChannel);
       } catch {
         // Non-fatal
       }
@@ -840,7 +891,7 @@ async function ensureProBinary(
 
   // Advance the marker so future unpinned launches use this build.
   try {
-    writeProVersionMarker(version);
+    writeProVersionMarker(version, releaseChannel);
   } catch {
     // Non-fatal
   }

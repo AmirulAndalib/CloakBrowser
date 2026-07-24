@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Formats.Tar;
 using System.IO.Compression;
-using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 
@@ -107,6 +106,24 @@ public static class Download
         }
     }
 
+    private static bool _previewFallbackWarned;
+
+    /// <summary>Reset the once-per-process Preview-fallback notice. Test seam.</summary>
+    internal static void ResetPreviewFallbackWarned() => _previewFallbackWarned = false;
+
+    /// <summary>
+    /// Tell the user, once per process, that a requested Preview build does not exist
+    /// for this platform and the Stable build is being used instead.
+    /// </summary>
+    private static void WarnPreviewFallback()
+    {
+        if (_previewFallbackWarned) return;
+        _previewFallbackWarned = true;
+        Console.Error.WriteLine(
+            "[cloakbrowser] Preview channel requested, but no preview build is available for "
+            + $"{Config.GetPlatformTag()}; using the stable build.");
+    }
+
     /// <summary>
     /// Show the launch welcome banner. A marker file gates the cadence: a paid
     /// (Pro) key shows once ever; free (keyless or a free GitHub key) re-shows
@@ -174,8 +191,10 @@ public static class Download
     /// the platform default.
     /// </param>
     /// <param name="ct">Cancellation token.</param>
+    /// <param name="releaseChannel">Stable (default) or Preview binary channel.</param>
     public static async Task<string> EnsureBinaryAsync(
-        string? licenseKey = null, string? browserVersion = null, CancellationToken ct = default)
+        string? licenseKey = null, string? browserVersion = null,
+        CancellationToken ct = default, string? releaseChannel = null)
     {
         // Check for local override first.
         var localOverride = Config.GetLocalBinaryOverride();
@@ -212,7 +231,8 @@ public static class Download
                 // returns the cached Pro binary and updates in the background.)
                 try
                 {
-                    return await EnsureProBinaryAsync(key, proVersion, info.Plan, ct).ConfigureAwait(false);
+                    return await EnsureProBinaryAsync(
+                        key, proVersion, info.Plan, ct, releaseChannel).ConfigureAwait(false);
                 }
                 catch (BinaryVerificationError)
                 {
@@ -308,8 +328,9 @@ public static class Download
     }
 
     /// <summary>Synchronous convenience wrapper around <see cref="EnsureBinaryAsync"/>.</summary>
-    public static string EnsureBinary(string? licenseKey = null, string? browserVersion = null) =>
-        EnsureBinaryAsync(licenseKey, browserVersion).GetAwaiter().GetResult();
+    public static string EnsureBinary(
+        string? licenseKey = null, string? browserVersion = null, string? releaseChannel = null) =>
+        EnsureBinaryAsync(licenseKey, browserVersion, releaseChannel: releaseChannel).GetAwaiter().GetResult();
 
     private static async Task DownloadAndExtractAsync(string? version, CancellationToken ct)
     {
@@ -359,7 +380,8 @@ public static class Download
 
     /// <summary>Ensure the Pro binary is downloaded and cached. Returns the binary path.</summary>
     private static async Task<string> EnsureProBinaryAsync(
-        string licenseKey, string? requestedVersion, string? plan, CancellationToken ct)
+        string licenseKey, string? requestedVersion, string? plan,
+        CancellationToken ct, string? releaseChannel)
     {
         // A validated free GitHub key routes here too (it downloads the latest binary),
         // but its welcome banner is the "free" one, not the paid Pro banner.
@@ -389,8 +411,8 @@ public static class Download
             return pinnedPath;
         }
 
-        // Unpinned: track the server's latest stable.
-        var effective = Config.GetEffectiveVersion(pro: true);
+        // Unpinned: track the server's latest selected channel.
+        var effective = Config.GetEffectiveVersion(pro: true, releaseChannel: releaseChannel);
 
         // Honor CLOAKBROWSER_AUTO_UPDATE=false the way the free path does: frozen AND a
         // cached Pro build present → keep it, skip the server check. With no cached build
@@ -407,7 +429,18 @@ public static class Download
 
         // GetProLatestVersion() is rate-limited to one network call per hour and returns a
         // cached string in between, so this foreground check stays cheap steady-state.
-        var latest = License.GetProLatestVersion();
+        var latest = License.GetProLatestVersion(releaseChannel);
+
+        // Tell the user when they asked for Preview but the server has no preview build
+        // for this platform, so the Stable build is used instead. The lookup is a cache
+        // hit (GetProLatestVersion above already populated it), so this only touches the
+        // network on the once-an-hour refresh.
+        if (Config.NormalizeReleaseChannel(releaseChannel) == "preview")
+        {
+            var release = License.GetProLatestRelease(releaseChannel);
+            if (release is { Fallback: true })
+                WarnPreviewFallback();
+        }
 
         // Prefer the server's latest when it is newer than — or replaces a missing — the
         // cached build. Otherwise stay on the cached Pro binary (fast, offline-ok).
@@ -436,7 +469,7 @@ public static class Download
             // so `info` (and a later server-outage launch) reflect the build we actually
             // launch — never a stale marker.
             if (version != effective)
-                WriteProVersionMarker(version);
+                WriteProVersionMarker(version, releaseChannel);
             CloakLog.Debug("Pro binary found in cache: {0} (version {1})", readyPath, version);
             ShowWelcome(welcomeTier);
             return readyPath;
@@ -471,7 +504,7 @@ public static class Download
             throw new InvalidOperationException(
                 $"Pro download completed but binary not found at: {downloadedPath}");
 
-        WriteProVersionMarker(version);
+        WriteProVersionMarker(version, releaseChannel);
         ShowWelcome(welcomeTier);
         return downloadedPath;
     }
@@ -602,16 +635,18 @@ public static class Download
         }
     }
 
-    private static void WriteProVersionMarker(string version)
+    private static void WriteProVersionMarker(string version, string? releaseChannel = null)
     {
-        var marker = Path.Combine(Config.GetCacheDir(), $"latest_pro_version_{Config.GetPlatformTag()}");
+        var markerPrefix = Config.NormalizeReleaseChannel(releaseChannel) == "preview"
+            ? "latest_pro_version_preview"
+            : "latest_pro_version";
+        var marker = Path.Combine(Config.GetCacheDir(), $"{markerPrefix}_{Config.GetPlatformTag()}");
         try
         {
             Directory.CreateDirectory(Config.GetCacheDir());
             var tmp = marker + ".tmp";
             File.WriteAllText(tmp, version);
-            if (File.Exists(marker)) File.Delete(marker);
-            File.Move(tmp, marker);
+            File.Move(tmp, marker, overwrite: true);
         }
         catch (IOException) { }
     }
@@ -1103,14 +1138,16 @@ public static class Download
     /// effectively running the free binary, and the active key may differ from the
     /// cached one.
     /// </summary>
-    public static CloakBinaryInfo BinaryInfo(string? browserVersion = null)
+    public static CloakBinaryInfo BinaryInfo(
+        string? browserVersion = null, string? releaseChannel = null)
     {
         // browserVersion (or CLOAKBROWSER_VERSION) pins the reported version so the
         // info matches what a pinned launch actually runs, instead of latest.
         var requested = Config.NormalizeRequestedVersion(browserVersion);
         // Prefer Pro only if a Pro binary actually exists on disk. GetEffectiveVersion
         // returns null for Pro when nothing is cached (it never falls back to free).
-        var proVersion = requested ?? Config.GetEffectiveVersion(pro: true);
+        var proVersion = requested ?? Config.GetEffectiveVersion(
+            pro: true, releaseChannel: releaseChannel);
         var pro = ProBinaryReady(proVersion);
 
         string effective;
@@ -1135,7 +1172,7 @@ public static class Download
             BinaryPath: binaryPath,
             Installed: File.Exists(binaryPath),
             CacheDir: Config.GetBinaryDir(effective, pro: pro),
-            DownloadUrl: pro ? Config.GetProLatestDownloadUrl() : Config.GetDownloadUrl(effective));
+            DownloadUrl: pro ? Config.GetProLatestDownloadUrl(releaseChannel) : Config.GetDownloadUrl(effective));
     }
 
     // -----------------------------------------------------------------------
@@ -1169,17 +1206,18 @@ public static class Download
     public static string? CheckForUpdate() => CheckForUpdateAsync().GetAwaiter().GetResult();
 
     /// <summary>
-    /// Move a Pro install to the server's latest stable. Blocks until complete. Returns the
+    /// Move a Pro install to the selected channel's latest. Blocks until complete. Returns the
     /// new version when a newer Pro build is downloaded or an already-cached newer build is
     /// activated, else null (already up to date or the server could not be reached).
     /// Requires a valid Pro license key.
     /// </summary>
-    public static async Task<string?> CheckForProUpdateAsync(string licenseKey, CancellationToken ct = default)
+    public static async Task<string?> CheckForProUpdateAsync(
+        string licenseKey, CancellationToken ct = default, string? releaseChannel = null)
     {
-        var latest = License.GetProLatestVersion();
+        var latest = License.GetProLatestVersion(releaseChannel);
         if (string.IsNullOrEmpty(latest)) return null;
 
-        var effective = Config.GetEffectiveVersion(pro: true);
+        var effective = Config.GetEffectiveVersion(pro: true, releaseChannel: releaseChannel);
         if (effective != null && !Config.VersionNewer(latest, effective) && ProBinaryReady(effective))
         {
             // Already on the latest cached Pro build.
@@ -1195,13 +1233,13 @@ public static class Download
                 throw new InvalidOperationException($"Pro download completed but binary not found at: {p}");
         }
 
-        WriteProVersionMarker(latest);
+        WriteProVersionMarker(latest, releaseChannel);
         return latest;
     }
 
     /// <summary>Synchronous convenience wrapper around <see cref="CheckForProUpdateAsync"/>.</summary>
-    public static string? CheckForProUpdate(string licenseKey) =>
-        CheckForProUpdateAsync(licenseKey).GetAwaiter().GetResult();
+    public static string? CheckForProUpdate(string licenseKey, string? releaseChannel = null) =>
+        CheckForProUpdateAsync(licenseKey, releaseChannel: releaseChannel).GetAwaiter().GetResult();
 
     private static bool ShouldCheckForUpdate()
     {

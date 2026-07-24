@@ -23,17 +23,21 @@ public static class CloakLauncher
     {
         options ??= new LaunchOptions();
 
-        string binaryPath = await Download.EnsureBinaryAsync(options.LicenseKey, options.BrowserVersion).ConfigureAwait(false);
+        string binaryPath = await Download.EnsureBinaryAsync(
+            options.LicenseKey, options.BrowserVersion,
+            releaseChannel: options.ReleaseChannel).ConfigureAwait(false);
         var (timezone, locale, exitIp) = await MaybeResolveGeoIpAsync(
             options.GeoIp, options.Proxy, options.Timezone, options.Locale, options.Args).ConfigureAwait(false);
-        var proxyResolution = ProxyResolver.Resolve(options.Proxy, options.BrowserVersion, options.LicenseKey);
+        var proxyResolution = ProxyResolver.Resolve(
+            options.Proxy, options.BrowserVersion, options.LicenseKey, options.ReleaseChannel);
         var args = await ResolveWebRtcArgsAsync(options.Args, options.Proxy).ConfigureAwait(false);
         args = MaybeAppendWebRtcExitIp(args, exitIp);
 
         var combined = new List<string>(args ?? new List<string>());
         combined.AddRange(proxyResolution.ExtraArgs);
         var chromeArgs = BuildArgs(options.StealthArgs, combined, timezone, locale, options.Headless, options.ExtensionPaths,
-            startMaximized: Config.BinarySupportsMaximizedWindow(options.LicenseKey, options.BrowserVersion)
+            startMaximized: Config.BinarySupportsMaximizedWindow(
+                options.LicenseKey, options.BrowserVersion, options.ReleaseChannel)
                 && !options.SuppressMaximize);
         MaybeWarnWindowsFonts(chromeArgs);
 
@@ -72,8 +76,8 @@ public static class CloakLauncher
             // Pass headless so headed handles default new pages/contexts to NoViewport
             // (track the real window - see CloakBrowserHandle.ApplyDefaultNoViewport).
             // headlessNoViewport extends that default to headless on newer binaries.
-            bool headlessNoViewport =
-                Config.BinarySupportsHeadlessNoViewport(options.LicenseKey, options.BrowserVersion);
+            bool headlessNoViewport = Config.BinarySupportsHeadlessNoViewport(
+                options.LicenseKey, options.BrowserVersion, options.ReleaseChannel);
             return new CloakBrowserHandle(
                 playwright, browser, options.Humanize, humanCfg, options.Headless, headlessNoViewport);
         }
@@ -112,6 +116,7 @@ public static class CloakLauncher
             ExtensionPaths = options.ExtensionPaths,
             LicenseKey = options.LicenseKey,
             BrowserVersion = options.BrowserVersion,
+            ReleaseChannel = options.ReleaseChannel,
             // geoip already resolved above; don't re-resolve.
             GeoIp = false,
             // Caller chose a viewport geometry → don't also auto-maximize the
@@ -149,17 +154,21 @@ public static class CloakLauncher
     {
         options ??= new LaunchContextOptions();
 
-        string binaryPath = await Download.EnsureBinaryAsync(options.LicenseKey, options.BrowserVersion).ConfigureAwait(false);
+        string binaryPath = await Download.EnsureBinaryAsync(
+            options.LicenseKey, options.BrowserVersion,
+            releaseChannel: options.ReleaseChannel).ConfigureAwait(false);
         var (timezone, locale, exitIp) = await MaybeResolveGeoIpAsync(
             options.GeoIp, options.Proxy, options.Timezone, options.Locale, options.Args).ConfigureAwait(false);
-        var proxyResolution = ProxyResolver.Resolve(options.Proxy, options.BrowserVersion, options.LicenseKey);
+        var proxyResolution = ProxyResolver.Resolve(
+            options.Proxy, options.BrowserVersion, options.LicenseKey, options.ReleaseChannel);
         var args = await ResolveWebRtcArgsAsync(options.Args, options.Proxy).ConfigureAwait(false);
         args = MaybeAppendWebRtcExitIp(args, exitIp);
 
         var combined = new List<string>(args ?? new List<string>());
         combined.AddRange(proxyResolution.ExtraArgs);
         var chromeArgs = BuildArgs(options.StealthArgs, combined, timezone, locale, options.Headless, options.ExtensionPaths,
-            startMaximized: Config.BinarySupportsMaximizedWindow(options.LicenseKey, options.BrowserVersion)
+            startMaximized: Config.BinarySupportsMaximizedWindow(
+                options.LicenseKey, options.BrowserVersion, options.ReleaseChannel)
                 && !options.NoViewport && options.Viewport == null);
         MaybeWarnWindowsFonts(chromeArgs);
 
@@ -555,7 +564,8 @@ public static class CloakLauncher
         // Viewport unset: headed tracks the real window; headless on a newer binary also
         // tracks it (coherent dimensions natively), older headless gets the fixed default.
         bool headlessNoViewport = options.Headless
-            && Config.BinarySupportsHeadlessNoViewport(options.LicenseKey, options.BrowserVersion);
+            && Config.BinarySupportsHeadlessNoViewport(
+                options.LicenseKey, options.BrowserVersion, options.ReleaseChannel);
         return options.Headless && !headlessNoViewport
             ? new ViewportSize { Width = Config.DefaultViewportWidth, Height = Config.DefaultViewportHeight }
             : ViewportSize.NoViewport;

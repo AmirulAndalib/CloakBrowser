@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { binaryInfo } from "../src/download.js";
 import { DEFAULT_VIEWPORT, getBinaryPath, getChromiumVersion, getPlatformTag } from "../src/config.js";
-import * as config from "../src/config.js";
 
 describe("binaryInfo", () => {
   it("returns correct structure", () => {
@@ -58,6 +57,31 @@ describe("binaryInfo", () => {
       else delete process.env.CLOAKBROWSER_CACHE_DIR;
     }
   });
+
+  it("threads the channel into the Pro download URL", () => {
+    const orig = process.env.CLOAKBROWSER_CACHE_DIR;
+    const dir = `/tmp/cloakbrowser-test-${Date.now()}-chan`;
+    fs.mkdirSync(dir, { recursive: true });
+    process.env.CLOAKBROWSER_CACHE_DIR = dir;
+    try {
+      // Same cached Pro binary satisfies both channels (version-keyed cache dir).
+      fs.writeFileSync(path.join(dir, `latest_pro_version_preview_${getPlatformTag()}`), "151.0.7900.10.1");
+      fs.writeFileSync(path.join(dir, `latest_pro_version_${getPlatformTag()}`), "151.0.7900.10.1");
+      const bp = getBinaryPath("151.0.7900.10.1", true);
+      fs.mkdirSync(path.dirname(bp), { recursive: true });
+      fs.writeFileSync(bp, "fake");
+      fs.chmodSync(bp, 0o755);
+
+      expect(binaryInfo(undefined, "preview").downloadUrl).toMatch(/\/api\/download\/latest\?channel=preview$/);
+      const stableUrl = binaryInfo(undefined, "stable").downloadUrl;
+      expect(stableUrl).toMatch(/\/api\/download\/latest$/);
+      expect(stableUrl).not.toContain("channel=preview");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      if (orig) process.env.CLOAKBROWSER_CACHE_DIR = orig;
+      else delete process.env.CLOAKBROWSER_CACHE_DIR;
+    }
+  });
 });
 
 describe("composable Playwright launch helpers", () => {
@@ -75,6 +99,21 @@ describe("composable Playwright launch helpers", () => {
       process.env.CLOAKBROWSER_BINARY_PATH = origBinaryPath;
     } else {
       delete process.env.CLOAKBROWSER_BINARY_PATH;
+    }
+  });
+
+  it("forwards releaseChannel to Playwright binary resolution", async () => {
+    delete process.env.CLOAKBROWSER_BINARY_PATH;
+    const ensureBinary = vi.fn().mockResolvedValue("/fake/chrome");
+    vi.doMock("../src/download.js", () => ({ ensureBinary }));
+    try {
+      const { buildLaunchOptions } = await import("../src/playwright.js");
+
+      await buildLaunchOptions({ releaseChannel: "preview" });
+
+      expect(ensureBinary).toHaveBeenCalledWith(undefined, undefined, "preview");
+    } finally {
+      vi.doUnmock("../src/download.js");
     }
   });
 
@@ -253,7 +292,7 @@ describe.skipIf(!process.env.CLOAKBROWSER_BINARY_PATH)(
       const webdriver = await page.evaluate(() => navigator.webdriver);
       expect(webdriver).toBeFalsy();
 
-      const plugins = await page.evaluate(() => navigator.plugins.length);
+      const plugins = await page.evaluate(() => Array.from(navigator.plugins).length);
       expect(plugins).toBeGreaterThan(0);
 
       await browser.close();

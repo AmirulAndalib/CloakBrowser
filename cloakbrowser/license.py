@@ -12,12 +12,13 @@ import logging
 import os
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
 
-from .config import get_cache_dir, get_platform_tag
+from .config import get_cache_dir, get_platform_tag, normalize_release_channel
 
 logger = logging.getLogger("cloakbrowser")
 
@@ -34,6 +35,31 @@ class LicenseInfo:
     valid: bool
     plan: str
     expires: str | None
+
+
+@dataclass(frozen=True)
+class ProReleaseInfo:
+    version: str
+    requested_channel: str
+    resolved_channel: str
+    fallback: bool
+
+
+def _release_from_sidecar(
+    data: Mapping[str, object], version: str, channel: str
+) -> ProReleaseInfo:
+    """Build a ProReleaseInfo from a resolution-sidecar dict (snake_case, with a
+    camelCase fallback for sidecars written by an older JS wrapper). A missing
+    ``fallback`` defaults to ``requested != resolved`` — mirrors JS and .NET."""
+    requested = str(data.get("requested_channel", data.get("requestedChannel", channel)))
+    resolved = str(data.get("resolved_channel", data.get("resolvedChannel", "stable")))
+    fallback = data.get("fallback")
+    return ProReleaseInfo(
+        version=version,
+        requested_channel=requested,
+        resolved_channel=resolved,
+        fallback=bool(fallback) if fallback is not None else requested != resolved,
+    )
 
 
 class CloakBrowserLicenseError(RuntimeError):
@@ -83,7 +109,11 @@ def license_error_message(error_text: str) -> str | None:
     match = _EXIT_CODE_RE.search(error_text or "")
     if not match:
         return None
-    return _LICENSE_EXIT_MESSAGES.get(int(match.group(1)))
+    try:
+        exit_code = int(match.group(1))
+    except ValueError:
+        return None
+    return _LICENSE_EXIT_MESSAGES.get(exit_code)
 
 
 _LICENSE_KEY_SOURCE_PARAM = "param"
@@ -138,7 +168,7 @@ def resolve_license_key(license_key: str | None = None) -> str | None:
 
 def build_launch_env(
     license_key: str | None = None,
-    user_env: dict[str, str] | None = None,
+    user_env: Mapping[str, str | None] | None = None,
 ) -> dict[str, str] | None:
     """Build child process env dict with any needed license key injection.
 
@@ -247,42 +277,92 @@ def validate_license(license_key: str) -> LicenseInfo | None:
         return None
 
 
-def get_pro_latest_version() -> str | None:
-    """Get the latest Pro binary version from the server.
-
-    Rate-limited to 1 call per hour via a marker file.
-    """
-    marker = get_cache_dir() / f".last_pro_version_check_{get_platform_tag()}"
+def get_pro_latest_release(
+    release_channel: str | None = None,
+) -> ProReleaseInfo | None:
+    """Get the server-resolved Pro release and channel for this platform."""
+    channel = normalize_release_channel(release_channel)
+    marker_suffix = (
+        f"preview_{get_platform_tag()}"
+        if channel == "preview"
+        else get_platform_tag()
+    )
+    marker = get_cache_dir() / f".last_pro_version_check_{marker_suffix}"
+    resolution_marker = get_cache_dir() / f".last_pro_version_resolution_{marker_suffix}"
 
     if marker.exists():
         try:
             age = time.time() - marker.stat().st_mtime
-            if age < PRO_VERSION_CHECK_INTERVAL:
-                content = marker.read_text().strip()
-                return content if content else None
-        except OSError:
+            if age < PRO_VERSION_CHECK_INTERVAL and resolution_marker.exists():
+                data = json.loads(resolution_marker.read_text())
+                version = marker.read_text().strip()
+                if version and data.get("version") == version:
+                    return _release_from_sidecar(data, version, channel)
+        except (OSError, ValueError, TypeError):
             pass
 
     try:
+        version_url = (
+            f"{PRO_VERSION_URL}?channel=preview"
+            if channel == "preview"
+            else PRO_VERSION_URL
+        )
         resp = httpx.get(
-            PRO_VERSION_URL,
+            version_url,
             headers={"X-Platform": get_platform_tag()},
             timeout=10.0,
         )
         resp.raise_for_status()
-        version = resp.json().get("version")
+        data = resp.json()
+        version = data.get("version")
         if not version:
             return None
+        resolved_channel = str(data.get("resolved_channel", "stable"))
+        release = ProReleaseInfo(
+            version=str(version),
+            requested_channel=str(data.get("requested_channel", channel)),
+            resolved_channel=resolved_channel,
+            fallback=bool(
+                data.get("fallback", channel != resolved_channel)
+            ),
+        )
 
         marker.parent.mkdir(parents=True, exist_ok=True)
+        resolution_tmp = resolution_marker.with_suffix(".tmp")
+        resolution_tmp.write_text(json.dumps(release.__dict__))
+        os.replace(str(resolution_tmp), str(resolution_marker))
         tmp = marker.with_suffix(".tmp")
-        tmp.write_text(version)
+        tmp.write_text(release.version)
         os.replace(str(tmp), str(marker))
-        return version
+        return release
 
     except Exception as e:
         logger.debug("Pro version check failed: %s", e)
+        try:
+            version = marker.read_text().strip()
+            if not version:
+                return None
+            # Prefer the last successful fetch's channel metadata (the resolution
+            # sidecar) so an offline preview build is not mislabeled as a stable
+            # fallback. Older wrappers left only the version marker, so its channel
+            # is unknowable — hardcode a conservative stable fallback then.
+            if resolution_marker.exists():
+                try:
+                    data = json.loads(resolution_marker.read_text())
+                    if data.get("version") == version:
+                        return _release_from_sidecar(data, version, channel)
+                except (OSError, ValueError, TypeError):
+                    pass
+            return ProReleaseInfo(version, channel, "stable", channel == "preview")
+        except OSError:
+            pass
         return None
+
+
+def get_pro_latest_version(release_channel: str | None = None) -> str | None:
+    """Get only the version from the server-resolved Pro release."""
+    release = get_pro_latest_release(release_channel)
+    return release.version if release else None
 
 
 def get_active_session_count(license_key: str) -> int | None:

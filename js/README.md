@@ -106,6 +106,12 @@ const browser = await launch({
 // Pin an exact Chromium version (Free or Pro)
 const browser = await launch({ browserVersion: '146.0.7680.177.5' });
 
+// Opt into the Pro Preview binary channel
+const browser = await launch({
+  licenseKey: 'cb_xxxxxxxx',
+  releaseChannel: 'preview',
+});
+
 // Auto-detect timezone/locale from proxy IP (requires: npm install mmdb-lib)
 const browser = await launch({
   proxy: 'http://proxy:8080',
@@ -212,6 +218,7 @@ if (newVersion) console.log(`Updated to ${newVersion}`);
 | `CLOAKBROWSER_WIDEVINE_CDM` | — | Path to a sideloaded `WidevineCdm` directory (overrides auto-detection next to the binary) |
 | `CLOAKBROWSER_WIDEVINE` | `1` | Set to `0` to disable automatic Widevine hint-file seeding for persistent contexts |
 | `CLOAKBROWSER_VERSION` | — | Pin to an exact Chromium version for rollback (e.g. `146.0.7680.177.5`). Works with Free and Pro binaries |
+| `CLOAKBROWSER_RELEASE_CHANNEL` | `stable` | Set to `preview` to opt into the Pro Preview binary channel |
 
 ### Widevine / DRM
 
@@ -320,6 +327,19 @@ Other tips for maximizing reCAPTCHA scores:
   ```
 
 - **Minimize `page.evaluate()` calls** before the reCAPTCHA check fires — each one sends CDP traffic
+
+**Try a Preview binary**
+
+Stable is the default. Opt into Preview per launch:
+
+```javascript
+const browser = await launch({
+  licenseKey: 'cb_xxxxxxxx',
+  releaseChannel: 'preview',
+});
+```
+
+Or set `CLOAKBROWSER_RELEASE_CHANNEL=preview` for all launches and CLI commands. Preview selects the newest build available for this platform: a newer Preview when present, otherwise Stable. `npx cloakbrowser info` reports the resolved channel and exact version. An exact `browserVersion` pin overrides the channel.
 
 **New update broke something? Roll back to the previous version**
 

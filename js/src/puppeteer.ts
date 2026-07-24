@@ -40,7 +40,14 @@ function resolveDefaultViewport(options: LaunchOptions): { width: number; height
   const headless = options.headless ?? true;
   // Headed and newer headless binaries: null (no emulation, coherent dimensions).
   // Older headless binaries: a fixed viewport keeps dimensions coherent.
-  if (!headless || binarySupportsHeadlessNoViewport(options.licenseKey, options.browserVersion)) {
+  if (
+    !headless ||
+    binarySupportsHeadlessNoViewport(
+      options.licenseKey,
+      options.browserVersion,
+      options.releaseChannel,
+    )
+  ) {
     return null;
   }
   return DEFAULT_VIEWPORT;
@@ -50,7 +57,11 @@ function resolveDefaultViewport(options: LaunchOptions): { width: number; height
 async function resolveArgs(options: LaunchOptions): Promise<{ binaryPath: string; args: string[] }> {
   const binaryPath =
     process.env.CLOAKBROWSER_BINARY_PATH ||
-    (await ensureBinary(options.licenseKey, options.browserVersion));
+    (await ensureBinary(
+      options.licenseKey,
+      options.browserVersion,
+      options.releaseChannel,
+    ));
   const { exitIp, ...resolved } = (await maybeResolveGeoip(options)) ?? {};
   let resolvedArgs = (await resolveWebrtcArgs(options)) ?? options.args;
 
@@ -71,13 +82,24 @@ function resolveProxy(options: LaunchOptions, args: string[]): { username: strin
   if (!options.proxy) return undefined;
 
   if (isSocksProxy(options.proxy)) {
-    const { proxyArgs } = resolveProxyConfig(options.proxy, options.browserVersion);
+    const { proxyArgs } = resolveProxyConfig(
+      options.proxy,
+      options.browserVersion,
+      options.licenseKey,
+      options.releaseChannel,
+    );
     args.push(...proxyArgs);
     return undefined;
   }
 
   // On binaries that ship inline proxy auth: pass full URL with inline creds.
-  if (binarySupportsHttpProxyInlineAuth(options.licenseKey, options.browserVersion)) {
+  if (
+    binarySupportsHttpProxyInlineAuth(
+      options.licenseKey,
+      options.browserVersion,
+      options.releaseChannel,
+    )
+  ) {
     if (typeof options.proxy === "string") {
       args.push(`--proxy-server=${normalizeHttpStringUrl(options.proxy)}`);
       return undefined;

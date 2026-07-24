@@ -84,7 +84,11 @@ export function buildContextOptions(
   // deterministic. Explicit viewport (incl. null) is always honored.
   const headless = effectiveHeadless(options);
   const headlessNoViewport =
-    headless && binarySupportsHeadlessNoViewport(options.licenseKey, options.browserVersion);
+    headless && binarySupportsHeadlessNoViewport(
+      options.licenseKey,
+      options.browserVersion,
+      options.releaseChannel,
+    );
   const viewport =
     options.viewport !== undefined
       ? options.viewport
@@ -112,9 +116,18 @@ export async function buildLaunchOptions(
 ): Promise<PlaywrightLaunchOptions> {
   const binaryPath =
     process.env.CLOAKBROWSER_BINARY_PATH ||
-    (await ensureBinary(options.licenseKey, options.browserVersion));
+    (await ensureBinary(
+      options.licenseKey,
+      options.browserVersion,
+      options.releaseChannel,
+    ));
   const { exitIp, ...resolved } = await maybeResolveGeoip(options);
-  const { proxyOption, proxyArgs } = resolveProxyConfig(options.proxy, options.browserVersion, options.licenseKey);
+  const { proxyOption, proxyArgs } = resolveProxyConfig(
+    options.proxy,
+    options.browserVersion,
+    options.licenseKey,
+    options.releaseChannel,
+  );
   let resolvedArgs = await resolveWebrtcArgs(options);
   resolvedArgs = appendWebrtcExitIp(resolvedArgs, exitIp);
   const args = buildArgs({ ...options, ...resolved, args: [...(resolvedArgs ?? []), ...proxyArgs] });
@@ -187,7 +200,11 @@ export async function launch(options: LaunchOptions = {}): Promise<Browser> {
   // older headless keeps Playwright's default viewport. Mirrors Python launch().
   if (
     !effectiveHeadless(options) ||
-    binarySupportsHeadlessNoViewport(options.licenseKey, options.browserVersion)
+    binarySupportsHeadlessNoViewport(
+      options.licenseKey,
+      options.browserVersion,
+      options.releaseChannel,
+    )
   ) {
     applyDefaultNoViewport(browser);
   }
@@ -301,9 +318,18 @@ export async function launchPersistentContext(
 
   const binaryPath =
     process.env.CLOAKBROWSER_BINARY_PATH ||
-    (await ensureBinary(options.licenseKey, options.browserVersion));
+    (await ensureBinary(
+      options.licenseKey,
+      options.browserVersion,
+      options.releaseChannel,
+    ));
   const { exitIp, ...resolved } = await maybeResolveGeoip(options);
-  const { proxyOption, proxyArgs } = resolveProxyConfig(options.proxy, options.browserVersion, options.licenseKey);
+  const { proxyOption, proxyArgs } = resolveProxyConfig(
+    options.proxy,
+    options.browserVersion,
+    options.licenseKey,
+    options.releaseChannel,
+  );
   let resolvedArgs = await resolveWebrtcArgs(options);
   resolvedArgs = appendWebrtcExitIp(resolvedArgs, exitIp);
   const args = buildArgs({ ...options, ...resolved, args: [...(resolvedArgs ?? []), ...proxyArgs] });

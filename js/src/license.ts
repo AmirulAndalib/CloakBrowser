@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { getCacheDir, getPlatformTag } from "./config.js";
+import { getCacheDir, getPlatformTag, normalizeReleaseChannel } from "./config.js";
 
 const VALIDATE_URL = "https://cloakbrowser.dev/api/license/validate";
 const PRO_VERSION_URL = "https://cloakbrowser.dev/api/download/version";
@@ -24,6 +24,13 @@ export interface LicenseInfo {
   valid: boolean;
   plan: string;
   expires: string | null;
+}
+
+export interface ProReleaseInfo {
+  version: string;
+  requestedChannel: "stable" | "preview";
+  resolvedChannel: "stable" | "preview";
+  fallback: boolean;
 }
 
 /**
@@ -268,54 +275,131 @@ export async function validateLicense(licenseKey: string): Promise<LicenseInfo |
   }
 }
 
-/**
- * Get the latest Pro binary version from the server.
- * Rate-limited to 1 call per hour via a marker file.
- */
-export async function getProLatestVersion(): Promise<string | null> {
-  const marker = path.join(
+/** Get the server-resolved Pro release and channel for this platform. */
+export async function getProLatestRelease(releaseChannel?: string): Promise<ProReleaseInfo | null> {
+  const channel = normalizeReleaseChannel(releaseChannel);
+  const markerSuffix = channel === "preview"
+    ? `preview_${getPlatformTag()}`
+    : getPlatformTag();
+  const marker = path.join(getCacheDir(), `.last_pro_version_check_${markerSuffix}`);
+  const resolutionMarker = path.join(
     getCacheDir(),
-    `.last_pro_version_check_${getPlatformTag()}`,
+    `.last_pro_version_resolution_${markerSuffix}`,
   );
 
   try {
-    if (fs.existsSync(marker)) {
+    if (fs.existsSync(marker) && fs.existsSync(resolutionMarker)) {
       const stats = fs.statSync(marker);
       const age = Date.now() - stats.mtimeMs;
       if (age < PRO_VERSION_CHECK_INTERVAL_MS) {
-        const content = fs.readFileSync(marker, "utf-8").trim();
-        return content || null;
+        const version = fs.readFileSync(marker, "utf-8").trim();
+        const cached = JSON.parse(fs.readFileSync(resolutionMarker, "utf-8")) as {
+          version?: string;
+          requested_channel?: "stable" | "preview";
+          resolved_channel?: "stable" | "preview";
+          requestedChannel?: "stable" | "preview";
+          resolvedChannel?: "stable" | "preview";
+          fallback?: boolean;
+        };
+        if (version && cached.version === version) {
+          const requestedChannel = cached.requested_channel ?? cached.requestedChannel ?? channel;
+          const resolvedChannel = cached.resolved_channel ?? cached.resolvedChannel ?? "stable";
+          return {
+            version,
+            requestedChannel,
+            resolvedChannel,
+            fallback: cached.fallback ?? requestedChannel !== resolvedChannel,
+          };
+        }
       }
     }
   } catch {
-    // Marker unreadable — proceed with fetch
+    // Cache unreadable — proceed with fetch.
   }
 
   try {
-    const resp = await fetch(PRO_VERSION_URL, {
+    const versionUrl = channel === "preview"
+      ? `${PRO_VERSION_URL}?channel=preview`
+      : PRO_VERSION_URL;
+    const resp = await fetch(versionUrl, {
       headers: { "X-Platform": getPlatformTag() },
       signal: AbortSignal.timeout(10_000),
     });
 
-    if (!resp.ok) {
-      throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
-    }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
 
     const data = (await resp.json()) as Record<string, unknown>;
     const version = data.version != null ? String(data.version) : null;
     if (!version) return null;
+    const requestedChannel = data.requested_channel === "preview" ? "preview" : channel;
+    const resolvedChannel = data.resolved_channel === "preview" ? "preview" : "stable";
+    const release: ProReleaseInfo = {
+      version,
+      requestedChannel,
+      resolvedChannel,
+      fallback: typeof data.fallback === "boolean"
+        ? data.fallback
+        : requestedChannel !== resolvedChannel,
+    };
 
     try {
       fs.mkdirSync(path.dirname(marker), { recursive: true });
+      fs.writeFileSync(resolutionMarker, JSON.stringify({
+        version: release.version,
+        requested_channel: release.requestedChannel,
+        resolved_channel: release.resolvedChannel,
+        fallback: release.fallback,
+      }));
       fs.writeFileSync(marker, version);
     } catch {
       // Non-fatal
     }
-
-    return version;
+    return release;
   } catch {
-    return null;
+    try {
+      const version = fs.readFileSync(marker, "utf-8").trim();
+      if (!version) return null;
+      // Prefer the last successful fetch's channel metadata (the resolution
+      // sidecar) so an offline preview build is not mislabeled as a stable
+      // fallback. Older wrappers left only the version marker, so its channel is
+      // unknowable — hardcode a conservative stable fallback then.
+      try {
+        const cached = JSON.parse(fs.readFileSync(resolutionMarker, "utf-8")) as {
+          version?: string;
+          requested_channel?: "stable" | "preview";
+          resolved_channel?: "stable" | "preview";
+          requestedChannel?: "stable" | "preview";
+          resolvedChannel?: "stable" | "preview";
+          fallback?: boolean;
+        };
+        if (cached.version === version) {
+          const requestedChannel = cached.requested_channel ?? cached.requestedChannel ?? channel;
+          const resolvedChannel = cached.resolved_channel ?? cached.resolvedChannel ?? "stable";
+          return {
+            version,
+            requestedChannel,
+            resolvedChannel,
+            fallback: cached.fallback ?? requestedChannel !== resolvedChannel,
+          };
+        }
+      } catch {
+        // Sidecar missing or unreadable — fall through to the conservative default.
+      }
+      return {
+        version,
+        requestedChannel: channel,
+        resolvedChannel: "stable",
+        fallback: channel === "preview",
+      };
+    } catch {
+      return null;
+    }
   }
+}
+
+/** Get only the version from the server-resolved Pro release. */
+export async function getProLatestVersion(releaseChannel?: string): Promise<string | null> {
+  return (await getProLatestRelease(releaseChannel))?.version ?? null;
 }
 
 /**

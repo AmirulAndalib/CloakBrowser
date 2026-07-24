@@ -11,6 +11,10 @@ namespace CloakBrowser;
 /// </summary>
 public sealed record LicenseInfo(bool Valid, string Plan, string? Expires);
 
+/// <summary>Server-resolved Pro release for the requested channel and platform.</summary>
+public sealed record ProReleaseInfo(
+    string Version, string RequestedChannel, string ResolvedChannel, bool Fallback);
+
 /// <summary>
 /// The Pro binary refused to run for a license reason. Thrown when a launch fails
 /// and the browser process exited with one of the Pro binary's license exit codes,
@@ -124,6 +128,9 @@ public static class License
 
     /// <summary>Overrides the Pro latest-version lookup for tests. Null -> real HTTP.</summary>
     internal static Func<string?>? ProLatestVersionOverride;
+
+    /// <summary>Overrides resolved Pro release metadata for tests. Null -> normal resolution.</summary>
+    internal static Func<ProReleaseInfo?>? ProLatestReleaseOverride;
 
     /// <summary>Overrides the live seat-count lookup for tests. Null -> real HTTP.</summary>
     internal static Func<string, int?>? ActiveSessionCountOverride;
@@ -301,62 +308,165 @@ public static class License
         }
     }
 
-    /// <summary>
-    /// Get the latest Pro binary version from the server.
-    /// Rate-limited to 1 call per hour via a marker file.
-    /// </summary>
-    public static string? GetProLatestVersion()
+    /// <summary>Get the server-resolved Pro release and channel for this platform.</summary>
+    public static ProReleaseInfo? GetProLatestRelease(string? releaseChannel = null)
     {
+        var channel = Config.NormalizeReleaseChannel(releaseChannel);
+        if (ProLatestReleaseOverride != null)
+            return ProLatestReleaseOverride();
         if (ProLatestVersionOverride != null)
-            return ProLatestVersionOverride();
+        {
+            var overridden = ProLatestVersionOverride();
+            return string.IsNullOrEmpty(overridden)
+                ? null
+                : new ProReleaseInfo(overridden, channel, channel, false);
+        }
 
-        var marker = Path.Combine(Config.GetCacheDir(), $".last_pro_version_check_{Config.GetPlatformTag()}");
+        var markerSuffix = channel == "preview"
+            ? $"preview_{Config.GetPlatformTag()}"
+            : Config.GetPlatformTag();
+        var marker = Path.Combine(Config.GetCacheDir(), $".last_pro_version_check_{markerSuffix}");
+        var resolutionMarker = Path.Combine(
+            Config.GetCacheDir(), $".last_pro_version_resolution_{markerSuffix}");
 
-        if (File.Exists(marker))
+        if (File.Exists(marker) && File.Exists(resolutionMarker))
         {
             try
             {
                 var age = (DateTime.UtcNow - File.GetLastWriteTimeUtc(marker)).TotalSeconds;
                 if (age < ProVersionCheckInterval)
                 {
-                    var content = File.ReadAllText(marker).Trim();
-                    return string.IsNullOrEmpty(content) ? null : content;
+                    var version = File.ReadAllText(marker).Trim();
+                    using var cachedDoc = JsonDocument.Parse(File.ReadAllText(resolutionMarker));
+                    var root = cachedDoc.RootElement;
+                    var cachedVersion = root.GetProperty("version").GetString();
+                    if (!string.IsNullOrEmpty(version) && cachedVersion == version)
+                    {
+                        var requested = root.TryGetProperty("requested_channel", out var requestedSnake)
+                            ? requestedSnake.GetString()
+                            : root.TryGetProperty("requestedChannel", out var requestedCamel)
+                                ? requestedCamel.GetString()
+                                : channel;
+                        var resolved = root.TryGetProperty("resolved_channel", out var resolvedSnake)
+                            ? resolvedSnake.GetString()
+                            : root.TryGetProperty("resolvedChannel", out var resolvedCamel)
+                                ? resolvedCamel.GetString()
+                                : "stable";
+                        requested ??= channel;
+                        resolved ??= "stable";
+                        var didFallback = root.TryGetProperty("fallback", out var fallback)
+                            ? fallback.GetBoolean()
+                            : requested != resolved;
+                        return new ProReleaseInfo(version, requested, resolved, didFallback);
+                    }
                 }
             }
             catch (IOException) { /* unreadable - proceed with fetch */ }
+            catch (JsonException) { /* invalid - proceed with fetch */ }
+            catch (KeyNotFoundException) { /* malformed sidecar - proceed with fetch */ }
+            catch (InvalidOperationException) { /* wrong JSON value kind - proceed with fetch */ }
         }
 
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, ProVersionUrl);
+            var versionUrl = channel == "preview"
+                ? $"{ProVersionUrl}?channel=preview"
+                : ProVersionUrl;
+            using var req = new HttpRequestMessage(HttpMethod.Get, versionUrl);
             req.Headers.Add("X-Platform", Config.GetPlatformTag());
             using var resp = Http.SendAsync(req).GetAwaiter().GetResult();
             resp.EnsureSuccessStatusCode();
             var json = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             using var doc = JsonDocument.Parse(json);
-            var version = doc.RootElement.TryGetProperty("version", out var ve) && ve.ValueKind == JsonValueKind.String
+            var root = doc.RootElement;
+            var version = root.TryGetProperty("version", out var ve) && ve.ValueKind == JsonValueKind.String
                 ? ve.GetString() : null;
-            if (string.IsNullOrEmpty(version))
-                return null;
+            if (string.IsNullOrEmpty(version)) return null;
+
+            var requested = root.TryGetProperty("requested_channel", out var requestedElement)
+                ? requestedElement.GetString() ?? channel : channel;
+            var resolved = root.TryGetProperty("resolved_channel", out var resolvedElement)
+                ? resolvedElement.GetString() ?? "stable" : "stable";
+            var didFallback = root.TryGetProperty("fallback", out var fallbackElement)
+                ? fallbackElement.ValueKind == JsonValueKind.True
+                : requested != resolved;
+            var release = new ProReleaseInfo(version, requested, resolved, didFallback);
 
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+                var resolutionTmp = resolutionMarker + ".tmp";
+                File.WriteAllText(resolutionTmp, JsonSerializer.Serialize(new
+                {
+                    version = release.Version,
+                    requested_channel = release.RequestedChannel,
+                    resolved_channel = release.ResolvedChannel,
+                    fallback = release.Fallback,
+                }));
+                File.Move(resolutionTmp, resolutionMarker, true);
                 var tmp = marker + ".tmp";
                 File.WriteAllText(tmp, version);
-                if (File.Exists(marker)) File.Delete(marker);
-                File.Move(tmp, marker);
+                File.Move(tmp, marker, true);
             }
             catch (IOException) { /* non-fatal */ }
 
-            return version;
+            return release;
         }
         catch (Exception ex)
         {
             CloakLog.Debug("Pro version check failed: {0}", ex.Message);
-            return null;
+            try
+            {
+                var version = File.ReadAllText(marker).Trim();
+                if (string.IsNullOrEmpty(version))
+                    return null;
+                // Prefer the last successful fetch's channel metadata (the resolution
+                // sidecar) so an offline preview build is not mislabeled as a stable
+                // fallback. Older wrappers left only the version marker, so its channel
+                // is unknowable — hardcode a conservative stable fallback then.
+                if (File.Exists(resolutionMarker))
+                {
+                    try
+                    {
+                        using var cachedDoc = JsonDocument.Parse(File.ReadAllText(resolutionMarker));
+                        var root = cachedDoc.RootElement;
+                        var cachedVersion = root.TryGetProperty("version", out var ve)
+                            ? ve.GetString() : null;
+                        if (cachedVersion == version)
+                        {
+                            var requested = root.TryGetProperty("requested_channel", out var rq)
+                                ? rq.GetString()
+                                : root.TryGetProperty("requestedChannel", out var rqc)
+                                    ? rqc.GetString() : channel;
+                            var resolved = root.TryGetProperty("resolved_channel", out var rs)
+                                ? rs.GetString()
+                                : root.TryGetProperty("resolvedChannel", out var rsc)
+                                    ? rsc.GetString() : "stable";
+                            requested ??= channel;
+                            resolved ??= "stable";
+                            var didFallback = root.TryGetProperty("fallback", out var fb)
+                                    && (fb.ValueKind == JsonValueKind.True || fb.ValueKind == JsonValueKind.False)
+                                ? fb.GetBoolean()
+                                : requested != resolved;
+                            return new ProReleaseInfo(version, requested, resolved, didFallback);
+                        }
+                    }
+                    catch (IOException) { /* unreadable - use conservative default */ }
+                    catch (JsonException) { /* malformed - use conservative default */ }
+                    catch (InvalidOperationException) { /* wrong value kind - use default */ }
+                }
+                return new ProReleaseInfo(version, channel, "stable", channel == "preview");
+            }
+            catch (IOException)
+            {
+                return null;
+            }
         }
     }
+
+    /// <summary>Get only the version from the server-resolved Pro release.</summary>
+    public static string? GetProLatestVersion(string? releaseChannel = null) =>
+        GetProLatestRelease(releaseChannel)?.Version;
 
     /// <summary>
     /// How many concurrent sessions (seats) this license is holding right now.

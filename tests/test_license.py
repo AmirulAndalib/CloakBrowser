@@ -14,6 +14,7 @@ from cloakbrowser.license import (
     LicenseInfo,
     build_launch_env,
     get_active_session_count,
+    get_pro_latest_release,
     get_pro_latest_version,
     resolve_license_key,
     validate_license,
@@ -266,10 +267,142 @@ class TestGetProLatestVersion:
         mock_resp.raise_for_status = MagicMock()
 
         with patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path):
-            with patch("cloakbrowser.license.httpx.get", return_value=mock_resp):
+            with patch(
+                "cloakbrowser.license.httpx.get", return_value=mock_resp
+            ) as mock_get:
                 version = get_pro_latest_version()
 
         assert version == "147.0.1234.5"
+        assert mock_get.call_args.args[0] == "https://cloakbrowser.dev/api/download/version"
+
+    def test_preview_uses_preview_endpoint_and_marker(self, tmp_path):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "version": "150.0.7871.114.3",
+            "requested_channel": "preview",
+            "resolved_channel": "stable",
+            "fallback": True,
+        }
+        mock_resp.raise_for_status = MagicMock()
+
+        with (
+            patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path),
+            patch(
+                "cloakbrowser.license.get_platform_tag", return_value="linux-x64"
+            ),
+            patch(
+                "cloakbrowser.license.httpx.get", return_value=mock_resp
+            ) as mock_get,
+        ):
+            release = get_pro_latest_release("preview")
+
+        assert release is not None
+        assert release.version == "150.0.7871.114.3"
+        assert release.resolved_channel == "stable"
+        assert release.fallback is True
+        assert mock_get.call_args.args[0].endswith("?channel=preview")
+        assert (
+            tmp_path / ".last_pro_version_check_preview_linux-x64"
+        ).read_text() == "150.0.7871.114.3"
+        assert not (tmp_path / ".last_pro_version_check_linux-x64").exists()
+
+    def test_old_server_preview_response_is_reported_as_stable_fallback(self, tmp_path):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"version": "150.0.7871.114.3"}
+        mock_resp.raise_for_status = MagicMock()
+
+        with (
+            patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path),
+            patch("cloakbrowser.license.httpx.get", return_value=mock_resp),
+        ):
+            release = get_pro_latest_release("preview")
+
+        assert release is not None
+        assert release.resolved_channel == "stable"
+        assert release.fallback is True
+
+    def test_reads_legacy_javascript_camelcase_sidecar(self, tmp_path):
+        platform_tag = "linux-x64"
+        (tmp_path / f".last_pro_version_check_preview_{platform_tag}").write_text(
+            "150.0.7871.114.3"
+        )
+        (tmp_path / f".last_pro_version_resolution_preview_{platform_tag}").write_text(
+            json.dumps({
+                "version": "150.0.7871.114.3",
+                "requestedChannel": "preview",
+                "resolvedChannel": "stable",
+                "fallback": True,
+            })
+        )
+        with (
+            patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path),
+            patch("cloakbrowser.license.get_platform_tag", return_value=platform_tag),
+            patch("cloakbrowser.license.httpx.get") as mock_get,
+        ):
+            release = get_pro_latest_release("preview")
+
+        mock_get.assert_not_called()
+        assert release is not None
+        assert release.resolved_channel == "stable"
+        assert release.fallback is True
+
+    def test_sidecar_missing_fallback_defaults_to_requested_ne_resolved(self, tmp_path):
+        # A sidecar with no explicit "fallback" and requested == resolved must NOT
+        # be reported as a fallback — matches the JS and .NET default.
+        platform_tag = "linux-x64"
+        (tmp_path / f".last_pro_version_check_preview_{platform_tag}").write_text(
+            "151.0.7900.10.1"
+        )
+        (tmp_path / f".last_pro_version_resolution_preview_{platform_tag}").write_text(
+            json.dumps({
+                "version": "151.0.7900.10.1",
+                "requested_channel": "preview",
+                "resolved_channel": "preview",
+            })  # no "fallback" key
+        )
+        with (
+            patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path),
+            patch("cloakbrowser.license.get_platform_tag", return_value=platform_tag),
+            patch("cloakbrowser.license.httpx.get") as mock_get,
+        ):
+            release = get_pro_latest_release("preview")
+
+        mock_get.assert_not_called()
+        assert release is not None
+        assert release.resolved_channel == "preview"
+        assert release.fallback is False
+
+    def test_environment_selects_preview(self, tmp_path):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"version": "151.0.1234.5"}
+        mock_resp.raise_for_status = MagicMock()
+
+        with (
+            patch.dict(os.environ, {"CLOAKBROWSER_RELEASE_CHANNEL": "preview"}),
+            patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path),
+            patch(
+                "cloakbrowser.license.httpx.get", return_value=mock_resp
+            ) as mock_get,
+        ):
+            get_pro_latest_version()
+
+        assert mock_get.call_args.args[0].endswith("?channel=preview")
+
+    def test_explicit_stable_overrides_preview_environment(self, tmp_path):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"version": "150.0.1234.5"}
+        mock_resp.raise_for_status = MagicMock()
+
+        with (
+            patch.dict(os.environ, {"CLOAKBROWSER_RELEASE_CHANNEL": "preview"}),
+            patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path),
+            patch(
+                "cloakbrowser.license.httpx.get", return_value=mock_resp
+            ) as mock_get,
+        ):
+            get_pro_latest_version("stable")
+
+        assert mock_get.call_args.args[0] == "https://cloakbrowser.dev/api/download/version"
 
     def test_sends_platform_header(self, tmp_path):
         mock_resp = MagicMock()
@@ -291,6 +424,13 @@ class TestGetProLatestVersion:
     def test_rate_limited(self, tmp_path):
         marker = tmp_path / ".last_pro_version_check_darwin-arm64"
         marker.write_text("147.0.1234.5")
+        resolution = tmp_path / ".last_pro_version_resolution_darwin-arm64"
+        resolution.write_text(json.dumps({
+            "version": "147.0.1234.5",
+            "requested_channel": "stable",
+            "resolved_channel": "stable",
+            "fallback": False,
+        }))
 
         with patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path):
             with patch(
@@ -308,6 +448,54 @@ class TestGetProLatestVersion:
                 version = get_pro_latest_version()
 
         assert version is None
+
+    def test_offline_preview_preserves_sidecar_channel(self, tmp_path):
+        # Stale marker (rate-limit expired) forces the network path; the server is
+        # unreachable, so the offline branch must reuse the resolution sidecar
+        # instead of mislabeling a genuine preview build as a stable fallback.
+        platform_tag = "linux-x64"
+        marker = tmp_path / f".last_pro_version_check_preview_{platform_tag}"
+        marker.write_text("151.0.7900.10.1")
+        resolution = tmp_path / f".last_pro_version_resolution_preview_{platform_tag}"
+        resolution.write_text(json.dumps({
+            "version": "151.0.7900.10.1",
+            "requested_channel": "preview",
+            "resolved_channel": "preview",
+            "fallback": False,
+        }))
+        old = time.time() - 7200  # 2h ago → past the 1h rate-limit window
+        os.utime(marker, (old, old))
+
+        with (
+            patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path),
+            patch("cloakbrowser.license.get_platform_tag", return_value=platform_tag),
+            patch("cloakbrowser.license.httpx.get", side_effect=Exception("network")),
+        ):
+            release = get_pro_latest_release("preview")
+
+        assert release is not None
+        assert release.version == "151.0.7900.10.1"
+        assert release.resolved_channel == "preview"
+        assert release.fallback is False
+
+    def test_offline_preview_without_sidecar_falls_back_to_stable(self, tmp_path):
+        # No resolution sidecar (older wrapper) → conservative stable fallback.
+        platform_tag = "linux-x64"
+        marker = tmp_path / f".last_pro_version_check_preview_{platform_tag}"
+        marker.write_text("151.0.7900.10.1")
+        old = time.time() - 7200
+        os.utime(marker, (old, old))
+
+        with (
+            patch("cloakbrowser.license.get_cache_dir", return_value=tmp_path),
+            patch("cloakbrowser.license.get_platform_tag", return_value=platform_tag),
+            patch("cloakbrowser.license.httpx.get", side_effect=Exception("network")),
+        ):
+            release = get_pro_latest_release("preview")
+
+        assert release is not None
+        assert release.resolved_channel == "stable"
+        assert release.fallback is True
 
 
 # ── get_active_session_count ──────────────────────────
@@ -451,6 +639,27 @@ class TestBinaryInfoTier:
 
         assert info["tier"] == "pro"
         assert info["version"] == "147.0.5555.1"
+
+    def test_preview_pro_download_url_carries_channel(self, tmp_path):
+        from cloakbrowser.config import get_binary_path, get_platform_tag
+        from cloakbrowser.download import binary_info
+
+        with patch.dict(os.environ, {"CLOAKBROWSER_CACHE_DIR": str(tmp_path)}, clear=False):
+            tag = get_platform_tag()
+            # Same cached Pro binary satisfies both channels (version-keyed cache dir);
+            # only the reported download URL should differ by channel.
+            (tmp_path / f"latest_pro_version_preview_{tag}").write_text("151.0.7900.10.1")
+            (tmp_path / f"latest_pro_version_{tag}").write_text("151.0.7900.10.1")
+            bp = get_binary_path("151.0.7900.10.1", pro=True)
+            bp.parent.mkdir(parents=True, exist_ok=True)
+            bp.write_text("fake")
+            bp.chmod(0o755)
+            preview_info = binary_info(release_channel="preview")
+            stable_info = binary_info(release_channel="stable")
+
+        assert preview_info["download_url"].endswith("/api/download/latest?channel=preview")
+        assert stable_info["download_url"].endswith("/api/download/latest")
+        assert "channel=preview" not in stable_info["download_url"]
 
 
 # ── ensure_binary Pro routing (fail-closed vs fall-back) ──────────────────────

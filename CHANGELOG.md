@@ -6,6 +6,17 @@ Changes are tagged: **[wrapper]** for Python/JS wrapper, **[binary]** for Chromi
 
 ---
 
+## [Unreleased]
+
+- **[wrapper]** Preview now means the newest build available for the current platform. A newer Preview is selected when present; otherwise it resolves to Stable, including when Stable has moved ahead. Python, JavaScript, and .NET CLI diagnostics report the requested and resolved channel plus the exact version that will launch.
+- **[binary]** Chromium **150.0.7871.114.4** (Pro, Linux x64 + arm64) — 73 source-level patches (up from 71). A coherence release. Pro license required; v146 stays free.
+  - **Consistent identity under CDP user-agent overrides** — subframes no longer disagree with the top frame about the browser identity when a custom user agent is set over CDP. Mainly affects Puppeteer, which sets one on every page session.
+  - **Closer Windows persona text rendering** — font availability and text measurements track a real Windows install more closely.
+  - **Complete locale coverage** — every supported locale now resolves to a coherent profile, with Greek (`el-GR`, `el-CY`) added.
+  - **Headed window geometry coherence** on the Windows and macOS personas; headless is unchanged.
+  - **More stable results across seeds** when running natively on macOS and Linux.
+  - No unsupported-flag warning bar when the sandbox is disabled, as required when running as root (e.g. in Docker).
+
 ## [0.5.1] — 2026-07-23
 
 - **[wrapper]** Fix GeoIP exit-IP resolution through authenticated HTTP proxies in the JavaScript wrapper. The CONNECT request sent the proxy's address in the `Host` header instead of the tunnel target, which strict proxies (e.g. Oxylabs backconnect) reject; the wrapper then silently fell back to the proxy gateway's location, producing a wrong timezone/locale for the session's real exit IP. The `Host` header now names the tunnel target per RFC 9110. JavaScript only; Python and .NET were unaffected.
@@ -102,7 +113,7 @@ Changes are tagged: **[wrapper]** for Python/JS wrapper, **[binary]** for Chromi
 
 ## [0.4.0] — 2026-06-22
 
-- **[wrapper]** **CloakBrowser Pro**: all launch functions now accept a `license_key` parameter (`licenseKey` in JS); a key can also be supplied via the `CLOAKBROWSER_LICENSE_KEY` environment variable or a `~/.cloakbrowser/license.key` file. With a valid key the latest binary is downloaded from cloakbrowser.dev; without one, the free binary continues to download from GitHub Releases exactly as before. License validation is cached locally for 24h, and the Pro binary is authenticated with the same pinned Ed25519 signature as the free binary. A valid key whose Pro download or signature check fails surfaces a clear error rather than silently downgrading to the free binary. Adds `validate_license`/`LicenseInfo` exports and a `tier` field on `binary_info()`. Details: https://cloakbrowser.dev
+- **[wrapper]** **CloakBrowser Pro**: all launch functions now accept a `license_key` parameter (`licenseKey` in JS); a key can also be supplied via the `CLOAKBROWSER_LICENSE_KEY` environment variable or a `~/.cloakbrowser/license.key` file. With a valid key the latest binary is downloaded from cloakbrowser.dev; without one, the free binary continues to download from GitHub Releases exactly as before. License validation is cached locally for 24h, and the Pro binary is authenticated with the same pinned Ed25519 signature as the free binary. A valid key whose Pro download or signature check fails surfaces a clear error rather than silently downgrading to the free binary. Adds `validate_license`/`LicenseInfo` exports and a `tier` field on `binary_info()`. Details: <https://cloakbrowser.dev>
 - **[wrapper]** **Security**: downloaded binaries are now verified against a pinned Ed25519 signature on the published `SHA256SUMS` (a detached `SHA256SUMS.sig`), so a compromised download mirror can no longer certify a tampered binary — the previous same-origin checksum proved integrity but not authenticity (#308). The signed manifest also binds the release version, rejecting a forced downgrade to an older signed build. Verification is mandatory on the official download path; silent auto-update is preserved for everyone because only a constant public key is pinned, not per-version hashes. Older installed wrappers are unaffected.
 - **[wrapper]** Headed launches no longer apply a fixed emulated viewport on top of the real browser window — the page now tracks the actual window so window-geometry stays self-consistent. Headless keeps a deterministic viewport (unchanged). Applies across `launch`, `launch_context`, `launch_persistent_context` (+ async) and the JS Playwright/Puppeteer wrappers. Passing an explicit `viewport=`/`no_viewport` (Python) or `viewport`/`defaultViewport` (JS) still works exactly as before.
 - **[wrapper]** **Breaking**: removed the optional `patchright` backend. The `backend` parameter and `CLOAKBROWSER_BACKEND` environment variable no longer exist, and the `cloakbrowser[patchright]` extra is gone. Stock Playwright is now the only backend. The stealth binary handles automation-signal suppression at the C++ level — patchright added no measurable benefit on top of it (identical reCAPTCHA v3 score to plain Playwright) while breaking proxy auth and `add_init_script` (#27). Callers passing `backend=...` will get a `TypeError`; remove the argument.

@@ -104,6 +104,16 @@ AVAILABLE_PLATFORMS: set[str] = set(PLATFORM_CHROMIUM_VERSIONS.keys())
 _VERSION_PIN_RE = re.compile(r"^[0-9]+(?:\.[0-9]+){3,4}$")
 
 
+def normalize_release_channel(release_channel: str | None = None) -> str:
+    """Return the requested release channel, defaulting to Stable."""
+    raw = (
+        release_channel
+        if release_channel is not None
+        else os.environ.get("CLOAKBROWSER_RELEASE_CHANNEL", "stable")
+    )
+    return "preview" if raw.strip().lower() == "preview" else "stable"
+
+
 def normalize_requested_version(version: str | None = None) -> str | None:
     """Return an explicit Chromium version pin from arg/env, or None.
 
@@ -199,7 +209,9 @@ def check_platform_available() -> None:
         )
 
 
-def get_effective_version(pro: bool = False) -> str | None:
+def get_effective_version(
+    pro: bool = False, release_channel: str | None = None
+) -> str | None:
     """Return the best available version: auto-updated if available, else platform default.
 
     Reads a platform-scoped marker file from the cache directory.
@@ -214,7 +226,13 @@ def get_effective_version(pro: bool = False) -> str | None:
     cache = get_cache_dir()
 
     if pro:
-        marker = cache / f"latest_pro_version_{get_platform_tag()}"
+        channel = normalize_release_channel(release_channel)
+        marker_prefix = (
+            "latest_pro_version_preview"
+            if channel == "preview"
+            else "latest_pro_version"
+        )
+        marker = cache / f"{marker_prefix}_{get_platform_tag()}"
         if marker.exists():
             try:
                 version = marker.read_text().strip()
@@ -312,7 +330,9 @@ HEADLESS_NO_VIEWPORT_MIN_VERSION: str | None = "148.0.7778.215.4"
 
 
 def binary_supports_headless_no_viewport(
-    license_key: str | None = None, browser_version: str | None = None
+    license_key: str | None = None,
+    browser_version: str | None = None,
+    release_channel: str | None = None,
 ) -> bool:
     """Whether headless can launch with ``no_viewport`` on the resolved binary.
 
@@ -337,7 +357,9 @@ def binary_supports_headless_no_viewport(
         from .license import resolve_license_key
 
         pro = bool(resolve_license_key(license_key))
-        version = get_effective_version(pro=pro)
+        version = get_effective_version(pro=pro, release_channel=release_channel)
+    if version is None:
+        return False
     try:
         return not _version_newer(HEADLESS_NO_VIEWPORT_MIN_VERSION, version)
     except (ValueError, AttributeError):
@@ -369,7 +391,9 @@ HTTP_PROXY_INLINE_AUTH_MIN_VERSION: dict[str, str] = {
 
 
 def binary_supports_http_proxy_inline_auth(
-    license_key: str | None = None, browser_version: str | None = None
+    license_key: str | None = None,
+    browser_version: str | None = None,
+    release_channel: str | None = None,
 ) -> bool:
     """Whether the resolved binary accepts inline HTTP proxy credentials.
 
@@ -397,7 +421,7 @@ def binary_supports_http_proxy_inline_auth(
         from .license import resolve_license_key
 
         pro = bool(resolve_license_key(license_key))
-        version = get_effective_version(pro=pro)
+        version = get_effective_version(pro=pro, release_channel=release_channel)
     if version is None:
         # Pro with no cached marker => resolve latest Pro from the server, which
         # is >= the floor by construction and always ships the patch.
@@ -409,7 +433,9 @@ def binary_supports_http_proxy_inline_auth(
 
 
 def binary_supports_maximized_window(
-    license_key: str | None = None, browser_version: str | None = None
+    license_key: str | None = None,
+    browser_version: str | None = None,
+    release_channel: str | None = None,
 ) -> bool:
     """Whether the wrapper may auto-add ``--start-maximized``.
 
@@ -421,4 +447,6 @@ def binary_supports_maximized_window(
     ``HEADLESS_NO_VIEWPORT_MIN_VERSION``; kept as its own name so the two can
     diverge later. Python, JS and .NET mirror this gate.
     """
-    return binary_supports_headless_no_viewport(license_key, browser_version)
+    return binary_supports_headless_no_viewport(
+        license_key, browser_version, release_channel
+    )

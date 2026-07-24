@@ -159,28 +159,49 @@ internal static class Diagnostics
             };
         }
         string? requested = Config.NormalizeRequestedVersion();
+        string requestedChannel = Config.NormalizeReleaseChannel();
 
         // For a Pro license, surface the server's latest separately from the version
         // that will actually launch, so `info` can never silently diverge from launch
         // (the divergence a customer hit: info showed latest, launch ran a stale cache).
         // --quick keeps `info` fully network-free (skip the server latest lookup).
-        string? latestVersion = (entitledPro && !quick) ? License.GetProLatestVersion() : null;
+        ProReleaseInfo? latestRelease = (entitledPro && !quick)
+            ? License.GetProLatestRelease(requestedChannel)
+            : null;
+        string? latestVersion = latestRelease?.Version;
 
         string? version;
+        string? installedVersion = null;
         if (!string.IsNullOrEmpty(requested))
             version = requested!;
         else if (entitledPro)
-            // "Will launch now" is the cached Pro build; if none is cached, the next
-            // launch downloads latestVersion. GetEffectiveVersion(true) returns null
-            // (never the free base) when nothing is cached.
-            version = Config.GetEffectiveVersion(true) ?? latestVersion;
+        {
+            // Mirror EnsureBinary: report what the next launch resolves to, while
+            // CLOAKBROWSER_AUTO_UPDATE=false retains an installed channel build.
+            installedVersion = Config.GetEffectiveVersion(true, requestedChannel);
+            var autoUpdate = (Environment.GetEnvironmentVariable("CLOAKBROWSER_AUTO_UPDATE") ?? "true").ToLowerInvariant();
+            bool updatesEnabled = autoUpdate != "false";
+            if (installedVersion != null && !updatesEnabled)
+                version = installedVersion;
+            else if (latestVersion != null && (installedVersion == null || Config.VersionNewer(latestVersion, installedVersion)))
+                version = latestVersion;
+            else
+                version = installedVersion ?? latestVersion;
+        }
         else
+        {
             version = Config.GetEffectiveVersion(false);
+            installedVersion = version;
+        }
         string? path = version != null ? Config.GetBinaryPath(version, entitledPro) : null;
         return new Dictionary<string, object?>
         {
             ["version"] = version,
             ["latest_version"] = latestVersion,
+            ["requested_channel"] = requestedChannel,
+            ["resolved_channel"] = latestRelease?.ResolvedChannel,
+            ["channel_fallback"] = latestRelease?.Fallback ?? false,
+            ["installed_version"] = installedVersion,
             ["pinned"] = !string.IsNullOrEmpty(requested),
             ["tier"] = entitledPro ? "pro" : "free",
             ["bundled_version"] = Config.ChromiumVersion,

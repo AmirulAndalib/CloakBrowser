@@ -83,7 +83,11 @@ export function buildArgs(options: LaunchOptions): string[] {
   if (
     !explicitViewport &&
     !hasWindowFlag &&
-    binarySupportsMaximizedWindow(options.licenseKey, options.browserVersion)
+    binarySupportsMaximizedWindow(
+      options.licenseKey,
+      options.browserVersion,
+      options.releaseChannel,
+    )
   ) {
     seen.set("--start-maximized", "--start-maximized");
   }

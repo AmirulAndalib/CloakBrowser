@@ -482,7 +482,13 @@ python -m cloakbrowser update       # Check for and download newer binary
 python -m cloakbrowser clear-cache  # Remove cached binaries
 ```
 
-`login` with no argument prompts you to paste a license key or press Enter to get a free key via a GitHub sign-in; `login <key>` saves a key directly. Both validate the key, then store it at `~/.cloakbrowser/license.key` so every launch picks it up. `info` reports the binary that will actually launch given your license, runs a quick launch test (and flags missing system libraries on Linux), shows your license tier, and checks fonts, GeoIP, and optional dependencies. Add `--quick` to skip the launch test or `--json` for machine-readable output. The same commands are available via `npx cloakbrowser <command>` (JS) and the `cloakbrowser` CLI (.NET).
+`login` with no argument prompts you to paste a license key or press Enter to get a free key via a GitHub sign-in; `login <key>` saves a key directly. Both validate the key, then store it at `~/.cloakbrowser/license.key` so every launch picks it up.
+
+`info` reports the binary that will actually launch given your license, runs a quick launch test (and flags missing system libraries on Linux), shows your license tier, and checks fonts, GeoIP, and optional dependencies. Add `--quick` to skip the launch test or `--json` for machine-readable output.
+
+`CLOAKBROWSER_RELEASE_CHANNEL=preview` also applies to `install`, `info`, and `update`. `info` shows the exact version that will launch and whether Preview resolved to Stable for the current platform.
+
+The same commands are available via `npx cloakbrowser <command>` (JS) and the `cloakbrowser` CLI (.NET).
 
 ### Utility Functions
 
@@ -663,6 +669,7 @@ Access the original un-patched Playwright page at `page._original` if you need r
 | `CLOAKBROWSER_WIDEVINE` | `1` | Set to `0` to disable automatic Widevine hint-file seeding for persistent contexts |
 | `CLOAKBROWSER_FETCH_WIDEVINE` | `0` | Docker only: set to `1` to auto-fetch the Widevine CDM on container start (Linux x86-64 only). See [Widevine / DRM](#widevine--drm) |
 | `CLOAKBROWSER_VERSION` | — | Pin to an exact Chromium version for rollback (e.g. `148.0.7778.215.2`). Works with Free and Pro binaries |
+| `CLOAKBROWSER_RELEASE_CHANNEL` | `stable` | Set to `preview` to opt into the Preview binary channel |
 
 ## Fingerprint Management
 
@@ -728,7 +735,7 @@ Supported by the binary but **not set by default** — pass via `args` to custom
 | `--fingerprint=off` | **Chromium 148+ binary only.** Pass-through debug mode — turns spoofing off and presents the machine's **real native fingerprint** (keeps only the baseline any Chrome needs). The binary strips the injected seed *and* `--fingerprint-platform`, so there's no mixed OS profile. Most useful on a genuine Windows machine to check whether an issue is our spoofing or the environment. Accepts `off`/`false`/`0`/`disable`/`disabled`. For a *pure* pass-through don't combine it with `geoip=True` / explicit timezone / locale — those stay applied. |
 | `--fingerprint-allow-3p-cookies` | **Chromium 148+ binary only.** Re-enable third-party cookies for embedded flows that need them (reCAPTCHA v3, SSO, some payment challenges). Off by default; turn on only where a login/payment/embedded challenge loads but never finishes. |
 | `--fingerprint-sapi-voices=false` | **Chromium 150+ binary only.** Opt out of the Windows speech-voice tables when spoofing Windows. On by default (the voice set matches a real Chrome install); turn off only if a target reacts badly to the Windows voice list. |
-| `--license-through-proxy` | **Chromium 148+ binary only, Linux only for now.** Route the Pro license/session calls through your `--proxy-server` instead of direct to cloakbrowser.dev. Off by default (these calls go direct, so they never spend proxy bandwidth or touch your scraping session). |
+| `--license-through-proxy` | **Chromium 148+ binary only (all platforms).** Route the Pro license/session calls through your `--proxy-server` instead of direct to cloakbrowser.dev. Off by default (these calls go direct, so they never spend proxy bandwidth or touch your scraping session). |
 | `--enable-blink-features=FakeShadowRoot` | Access closed shadow DOM elements |
 
 > **Note:** All stealth tests were verified with the default fingerprint config above. Changing these flags may affect detection results — test your configuration before using in production.
@@ -1204,6 +1211,34 @@ pip install -U cloakbrowser    # Python
 npm install cloakbrowser@latest # JavaScript
 docker pull cloakhq/cloakbrowser:latest  # Docker
 ```
+
+### Preview release channel
+
+Stable is the default. Opt into Preview per launch:
+
+```python
+browser = launch(license_key="cb_xxxxxxxx", release_channel="preview")
+```
+
+```javascript
+const browser = await launch({ licenseKey: 'cb_xxxxxxxx', releaseChannel: 'preview' });
+```
+
+```csharp
+await using var browser = await CloakLauncher.LaunchAsync(new LaunchOptions
+{
+    LicenseKey = "cb_xxxxxxxx",
+    ReleaseChannel = "preview",
+});
+```
+
+Or enable Preview for all wrappers and CLI commands:
+
+```bash
+export CLOAKBROWSER_RELEASE_CHANNEL=preview
+```
+
+Preview availability is platform-specific. Preview always selects the newest build available for your platform: a newer Preview when one exists, otherwise Stable (including when Stable is newer). `cloakbrowser info` shows `Preview → Stable fallback` when that happens. An exact version pin overrides the release channel.
 
 ### New update broke something? Roll back
 

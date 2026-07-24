@@ -242,7 +242,8 @@ export function normalizeHttpStringUrl(urlStr: string): string {
 export function resolveProxyConfig(
   proxy: string | ProxyDict | undefined,
   browserVersion?: string,
-  licenseKey?: string
+  licenseKey?: string,
+  releaseChannel?: string,
 ): ProxyConfig {
   if (!proxy) return { proxyArgs: [] };
 
@@ -263,7 +264,10 @@ export function resolveProxyConfig(
   // use Chrome's native proxy authentication path instead of Playwright's CDP
   // auth interceptor (#182). Older binaries (free macOS/linux-arm64) can't parse
   // inline credentials, so they fall through to the Playwright proxy dict below.
-  if (hasCredentials(proxy) && binarySupportsHttpProxyInlineAuth(licenseKey, browserVersion)) {
+  if (
+    hasCredentials(proxy) &&
+    binarySupportsHttpProxyInlineAuth(licenseKey, browserVersion, releaseChannel)
+  ) {
     if (typeof proxy === "string") {
       return { proxyArgs: [`--proxy-server=${normalizeHttpStringUrl(proxy)}`] };
     }

@@ -178,6 +178,7 @@ def launch(
     extension_paths: list[str] | None = None,
     license_key: str | None = None,
     browser_version: str | None = None,
+    release_channel: str | None = None,
     _suppress_maximize: bool = False,
     **kwargs: Any,
 ) -> Any:
@@ -219,13 +220,13 @@ def launch(
 
     from playwright.sync_api import sync_playwright
 
-    binary_path = ensure_binary(license_key=license_key, browser_version=browser_version)
+    binary_path = ensure_binary(license_key=license_key, browser_version=browser_version, release_channel=release_channel)
     timezone, locale, exit_ip = maybe_resolve_geoip(geoip, proxy, timezone, locale, args)
-    proxy_kwargs, proxy_extra_args = _resolve_proxy_config(proxy, browser_version, license_key)
+    proxy_kwargs, proxy_extra_args = _resolve_proxy_config(proxy, browser_version, license_key, release_channel)
     args = _resolve_webrtc_args(args, proxy)
     args = _append_webrtc_exit_ip(args, exit_ip)
 
-    chrome_args = build_args(stealth_args, (args or []) + proxy_extra_args, timezone=timezone, locale=locale, headless=headless, extension_paths=extension_paths, start_maximized=binary_supports_maximized_window(license_key, browser_version) and not _suppress_maximize)
+    chrome_args = build_args(stealth_args, (args or []) + proxy_extra_args, timezone=timezone, locale=locale, headless=headless, extension_paths=extension_paths, start_maximized=binary_supports_maximized_window(license_key, browser_version, release_channel) and not _suppress_maximize)
     _maybe_warn_windows_fonts(chrome_args)
 
     logger.debug("Launching stealth Chromium (headless=%s, args=%d)", headless, len(chrome_args))
@@ -257,9 +258,12 @@ def launch(
     # Patch close() to also stop the Playwright instance
     _original_close = browser.close
 
-    def _close_with_cleanup() -> None:
+    def _close_with_cleanup(*, reason: str | None = None) -> None:
         try:
-            _original_close()
+            if reason is None:
+                _original_close()
+            else:
+                _original_close(reason=reason)
         finally:
             pw.stop()
 
@@ -269,7 +273,7 @@ def launch(
     # real window) and for headless on binaries that report coherent dimensions
     # natively; older headless binaries keep Playwright's default viewport. Apply
     # before humanize so the wraps compose.
-    if not headless or binary_supports_headless_no_viewport(license_key, browser_version):
+    if not headless or binary_supports_headless_no_viewport(license_key, browser_version, release_channel):
         _default_no_viewport(browser)
 
     # Human-like behavioral patching
@@ -296,6 +300,7 @@ async def launch_async(  # noqa: C901
     extension_paths: list[str] | None = None,
     license_key: str | None = None,
     browser_version: str | None = None,
+    release_channel: str | None = None,
     _suppress_maximize: bool = False,
     **kwargs: Any,
 ) -> Any:
@@ -335,12 +340,12 @@ async def launch_async(  # noqa: C901
 
     from playwright.async_api import async_playwright
 
-    binary_path = ensure_binary(license_key=license_key, browser_version=browser_version)
+    binary_path = ensure_binary(license_key=license_key, browser_version=browser_version, release_channel=release_channel)
     timezone, locale, exit_ip = maybe_resolve_geoip(geoip, proxy, timezone, locale, args)
-    proxy_kwargs, proxy_extra_args = _resolve_proxy_config(proxy, browser_version, license_key)
+    proxy_kwargs, proxy_extra_args = _resolve_proxy_config(proxy, browser_version, license_key, release_channel)
     args = _resolve_webrtc_args(args, proxy)
     args = _append_webrtc_exit_ip(args, exit_ip)
-    chrome_args = build_args(stealth_args, (args or []) + proxy_extra_args, timezone=timezone, locale=locale, headless=headless, extension_paths=extension_paths, start_maximized=binary_supports_maximized_window(license_key, browser_version) and not _suppress_maximize)
+    chrome_args = build_args(stealth_args, (args or []) + proxy_extra_args, timezone=timezone, locale=locale, headless=headless, extension_paths=extension_paths, start_maximized=binary_supports_maximized_window(license_key, browser_version, release_channel) and not _suppress_maximize)
     _maybe_warn_windows_fonts(chrome_args)
 
     logger.debug("Launching stealth Chromium async (headless=%s, args=%d)", headless, len(chrome_args))
@@ -372,9 +377,12 @@ async def launch_async(  # noqa: C901
     # Patch close() to also stop the Playwright instance
     _original_close = browser.close
 
-    async def _close_with_cleanup() -> None:
+    async def _close_with_cleanup(*, reason: str | None = None) -> None:
         try:
-            await _original_close()
+            if reason is None:
+                await _original_close()
+            else:
+                await _original_close(reason=reason)
         finally:
             await pw.stop()
 
@@ -382,7 +390,7 @@ async def launch_async(  # noqa: C901
 
     # Default new_page()/new_context() to no_viewport for headed and qualifying
     # headless binaries (see launch()).
-    if not headless or binary_supports_headless_no_viewport(license_key, browser_version):
+    if not headless or binary_supports_headless_no_viewport(license_key, browser_version, release_channel):
         _default_no_viewport_async(browser)
 
     # Human-like behavioral patching (async variant)
@@ -402,7 +410,7 @@ def launch_persistent_context(
     args: list[str] | None = None,
     stealth_args: bool = True,
     user_agent: str | None = None,
-    viewport: dict | None = _VIEWPORT_UNSET,
+    viewport: Any = _VIEWPORT_UNSET,
     locale: str | None = None,
     timezone: str | None = None,
     color_scheme: Literal["light", "dark", "no-preference"] | None = None,
@@ -413,6 +421,7 @@ def launch_persistent_context(
     extension_paths: list[str] | None = None,
     license_key: str | None = None,
     browser_version: str | None = None,
+    release_channel: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Launch stealth browser with a persistent profile and return a BrowserContext.
@@ -461,12 +470,12 @@ def launch_persistent_context(
 
     timezone = _resolve_timezone(timezone, kwargs)
 
-    binary_path = ensure_binary(license_key=license_key, browser_version=browser_version)
+    binary_path = ensure_binary(license_key=license_key, browser_version=browser_version, release_channel=release_channel)
     timezone, locale, exit_ip = maybe_resolve_geoip(geoip, proxy, timezone, locale, args)
-    proxy_kwargs, proxy_extra_args = _resolve_proxy_config(proxy, browser_version, license_key)
+    proxy_kwargs, proxy_extra_args = _resolve_proxy_config(proxy, browser_version, license_key, release_channel)
     args = _resolve_webrtc_args(args, proxy)
     args = _append_webrtc_exit_ip(args, exit_ip)
-    chrome_args = build_args(stealth_args, (args or []) + proxy_extra_args, timezone=timezone, locale=locale, headless=headless, extension_paths=extension_paths, start_maximized=binary_supports_maximized_window(license_key, browser_version) and viewport is _VIEWPORT_UNSET and "viewport" not in kwargs and "no_viewport" not in kwargs)
+    chrome_args = build_args(stealth_args, (args or []) + proxy_extra_args, timezone=timezone, locale=locale, headless=headless, extension_paths=extension_paths, start_maximized=binary_supports_maximized_window(license_key, browser_version, release_channel) and viewport is _VIEWPORT_UNSET and "viewport" not in kwargs and "no_viewport" not in kwargs)
     _maybe_warn_windows_fonts(chrome_args)
 
     logger.debug(
@@ -482,7 +491,7 @@ def launch_persistent_context(
         context_kwargs["user_agent"] = user_agent
     context_kwargs.update(
         _resolve_context_viewport(
-            viewport, headless, binary_supports_headless_no_viewport(license_key, browser_version)
+            viewport, headless, binary_supports_headless_no_viewport(license_key, browser_version, release_channel)
         )
     )
     if color_scheme:
@@ -522,9 +531,12 @@ def launch_persistent_context(
     # Patch close() to also stop the Playwright instance
     _original_close = context.close
 
-    def _close_with_cleanup() -> None:
+    def _close_with_cleanup(*, reason: str | None = None) -> None:
         try:
-            _original_close()
+            if reason is None:
+                _original_close()
+            else:
+                _original_close(reason=reason)
         finally:
             pw.stop()
 
@@ -547,7 +559,7 @@ async def launch_persistent_context_async(
     args: list[str] | None = None,
     stealth_args: bool = True,
     user_agent: str | None = None,
-    viewport: dict | None = _VIEWPORT_UNSET,
+    viewport: Any = _VIEWPORT_UNSET,
     locale: str | None = None,
     timezone: str | None = None,
     color_scheme: Literal["light", "dark", "no-preference"] | None = None,
@@ -558,6 +570,7 @@ async def launch_persistent_context_async(
     extension_paths: list[str] | None = None,
     license_key: str | None = None,
     browser_version: str | None = None,
+    release_channel: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Async version of launch_persistent_context().
@@ -608,12 +621,12 @@ async def launch_persistent_context_async(
 
     timezone = _resolve_timezone(timezone, kwargs)
 
-    binary_path = ensure_binary(license_key=license_key, browser_version=browser_version)
+    binary_path = ensure_binary(license_key=license_key, browser_version=browser_version, release_channel=release_channel)
     timezone, locale, exit_ip = maybe_resolve_geoip(geoip, proxy, timezone, locale, args)
-    proxy_kwargs, proxy_extra_args = _resolve_proxy_config(proxy, browser_version, license_key)
+    proxy_kwargs, proxy_extra_args = _resolve_proxy_config(proxy, browser_version, license_key, release_channel)
     args = _resolve_webrtc_args(args, proxy)
     args = _append_webrtc_exit_ip(args, exit_ip)
-    chrome_args = build_args(stealth_args, (args or []) + proxy_extra_args, timezone=timezone, locale=locale, headless=headless, extension_paths=extension_paths, start_maximized=binary_supports_maximized_window(license_key, browser_version) and viewport is _VIEWPORT_UNSET and "viewport" not in kwargs and "no_viewport" not in kwargs)
+    chrome_args = build_args(stealth_args, (args or []) + proxy_extra_args, timezone=timezone, locale=locale, headless=headless, extension_paths=extension_paths, start_maximized=binary_supports_maximized_window(license_key, browser_version, release_channel) and viewport is _VIEWPORT_UNSET and "viewport" not in kwargs and "no_viewport" not in kwargs)
     _maybe_warn_windows_fonts(chrome_args)
 
     logger.debug(
@@ -629,7 +642,7 @@ async def launch_persistent_context_async(
         context_kwargs["user_agent"] = user_agent
     context_kwargs.update(
         _resolve_context_viewport(
-            viewport, headless, binary_supports_headless_no_viewport(license_key, browser_version)
+            viewport, headless, binary_supports_headless_no_viewport(license_key, browser_version, release_channel)
         )
     )
     if color_scheme:
@@ -669,9 +682,12 @@ async def launch_persistent_context_async(
     # Patch close() to also stop the Playwright instance
     _original_close = context.close
 
-    async def _close_with_cleanup() -> None:
+    async def _close_with_cleanup(*, reason: str | None = None) -> None:
         try:
-            await _original_close()
+            if reason is None:
+                await _original_close()
+            else:
+                await _original_close(reason=reason)
         finally:
             await pw.stop()
 
@@ -693,7 +709,7 @@ def launch_context(
     args: list[str] | None = None,
     stealth_args: bool = True,
     user_agent: str | None = None,
-    viewport: dict | None = _VIEWPORT_UNSET,
+    viewport: Any = _VIEWPORT_UNSET,
     locale: str | None = None,
     timezone: str | None = None,
     color_scheme: Literal["light", "dark", "no-preference"] | None = None,
@@ -704,6 +720,7 @@ def launch_context(
     extension_paths: list[str] | None = None,
     license_key: str | None = None,
     browser_version: str | None = None,
+    release_channel: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Launch stealth browser and return a BrowserContext with common options pre-set.
@@ -748,6 +765,7 @@ def launch_context(
     browser = launch(headless=headless, proxy=proxy, args=args, stealth_args=stealth_args,
                      timezone=timezone, locale=locale, extension_paths=extension_paths,
                      license_key=license_key, browser_version=browser_version,
+                     release_channel=release_channel,
                      # Caller chose a viewport geometry → don't also auto-maximize
                      # the window (mirrors the persistent-context path + JS).
                      _suppress_maximize=(viewport is not _VIEWPORT_UNSET or "no_viewport" in kwargs))
@@ -757,7 +775,7 @@ def launch_context(
         context_kwargs["user_agent"] = user_agent
     context_kwargs.update(
         _resolve_context_viewport(
-            viewport, headless, binary_supports_headless_no_viewport(license_key, browser_version)
+            viewport, headless, binary_supports_headless_no_viewport(license_key, browser_version, release_channel)
         )
     )
     if color_scheme:
@@ -798,7 +816,7 @@ async def launch_context_async(
     args: list[str] | None = None,
     stealth_args: bool = True,
     user_agent: str | None = None,
-    viewport: dict | None = _VIEWPORT_UNSET,
+    viewport: Any = _VIEWPORT_UNSET,
     locale: str | None = None,
     timezone: str | None = None,
     color_scheme: Literal["light", "dark", "no-preference"] | None = None,
@@ -809,6 +827,7 @@ async def launch_context_async(
     extension_paths: list[str] | None = None,
     license_key: str | None = None,
     browser_version: str | None = None,
+    release_channel: str | None = None,
     **kwargs: Any,
 ) -> Any:
     """Async version of launch_context().
@@ -872,6 +891,7 @@ async def launch_context_async(
     browser = await launch_async(headless=headless, proxy=proxy, args=args, stealth_args=stealth_args,
                                  timezone=timezone, locale=locale, extension_paths=extension_paths,
                                  license_key=license_key, browser_version=browser_version,
+                                 release_channel=release_channel,
                                  # Caller chose a viewport geometry → don't also auto-maximize
                                  # the window (mirrors the persistent-context path + JS).
                                  _suppress_maximize=(viewport is not _VIEWPORT_UNSET or "no_viewport" in kwargs))
@@ -881,7 +901,7 @@ async def launch_context_async(
         context_kwargs["user_agent"] = user_agent
     context_kwargs.update(
         _resolve_context_viewport(
-            viewport, headless, binary_supports_headless_no_viewport(license_key, browser_version)
+            viewport, headless, binary_supports_headless_no_viewport(license_key, browser_version, release_channel)
         )
     )
     if color_scheme:
@@ -1342,7 +1362,7 @@ def _maybe_warn_windows_fonts(chrome_args: list[str]) -> None:
         if marker.exists():
             return
         present = _windows_fonts_present()
-        if present is None or present is True:
+        if present is None or present:
             return  # full set present, or can't determine — don't warn
         # Write straight to stderr (like the welcome banner and the JS/.NET
         # wrappers) so an app's logging config can't silence it.
@@ -1467,6 +1487,7 @@ def _resolve_proxy_config(
     proxy: str | ProxySettings | None,
     browser_version: str | None = None,
     license_key: str | None = None,
+    release_channel: str | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Resolve proxy into Playwright kwargs and Chrome args.
 
@@ -1488,8 +1509,9 @@ def _resolve_proxy_config(
         if isinstance(proxy, dict):
             url = _reconstruct_socks_url(proxy)
             extra_args = [f"--proxy-server={url}"]
-            if proxy.get("bypass"):
-                extra_args.append(f"--proxy-bypass-list={proxy['bypass']}")
+            bypass = proxy.get("bypass")
+            if bypass:
+                extra_args.append(f"--proxy-bypass-list={bypass}")
             return {}, extra_args
         # String URL — re-encode creds to work around Chromium parser truncating
         # passwords at '=' and other special chars (#157).
@@ -1499,14 +1521,13 @@ def _resolve_proxy_config(
     # use Chrome's native proxy authentication path instead of Playwright's CDP
     # auth interceptor (#182). Older binaries (free macOS/linux-arm64) can't parse
     # inline credentials, so they fall through to the Playwright proxy dict below.
-    if _has_credentials(proxy) and binary_supports_http_proxy_inline_auth(
-        license_key, browser_version
-    ):
+    if _has_credentials(proxy) and binary_supports_http_proxy_inline_auth(license_key, browser_version, release_channel):
         if isinstance(proxy, dict):
             url = _reconstruct_http_url(proxy)
             extra_args = [f"--proxy-server={url}"]
-            if proxy.get("bypass"):
-                extra_args.append(f"--proxy-bypass-list={proxy['bypass']}")
+            bypass = proxy.get("bypass")
+            if bypass:
+                extra_args.append(f"--proxy-bypass-list={bypass}")
             return {}, extra_args
         return {}, [f"--proxy-server={_normalize_http_string_url(proxy)}"]
 

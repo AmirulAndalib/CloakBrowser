@@ -12,9 +12,10 @@ def _run(monkeypatch, plan):
     monkeypatch.setattr(dl, "normalize_requested_version", lambda v: v)
     captured = {}
 
-    def fake_pro(key, requested_version=None, plan=None):
+    def fake_pro(key, requested_version=None, plan=None, release_channel=None):
         captured["rv"] = requested_version
         captured["plan"] = plan
+        captured["release_channel"] = release_channel
         return "/tmp/chrome"
 
     monkeypatch.setattr(dl, "_ensure_pro_binary", fake_pro)

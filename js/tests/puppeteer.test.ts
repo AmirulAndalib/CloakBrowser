@@ -49,6 +49,15 @@ describe("puppeteer launch", () => {
     );
   });
 
+  it("forwards releaseChannel to binary resolution", async () => {
+    const { ensureBinary } = await import("../src/download.js");
+    const { launch } = await import("../src/puppeteer.js");
+
+    await launch({ releaseChannel: "preview" });
+
+    expect(ensureBinary).toHaveBeenCalledWith(undefined, undefined, "preview");
+  });
+
   it("includes stealth args by default", async () => {
     const { launch } = await import("../src/puppeteer.js");
     await launch();

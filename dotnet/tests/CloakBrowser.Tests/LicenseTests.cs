@@ -29,6 +29,7 @@ public class LicenseTests : IDisposable
     private readonly string? _prevCacheDir;
     private readonly string? _prevLicenseEnv;
     private readonly string? _prevDownloadUrl;
+    private readonly string? _prevReleaseChannel;
 
     public LicenseTests()
     {
@@ -37,9 +38,11 @@ public class LicenseTests : IDisposable
         _prevCacheDir = Environment.GetEnvironmentVariable("CLOAKBROWSER_CACHE_DIR");
         _prevLicenseEnv = Environment.GetEnvironmentVariable("CLOAKBROWSER_LICENSE_KEY");
         _prevDownloadUrl = Environment.GetEnvironmentVariable("CLOAKBROWSER_DOWNLOAD_URL");
+        _prevReleaseChannel = Environment.GetEnvironmentVariable("CLOAKBROWSER_RELEASE_CHANNEL");
         Environment.SetEnvironmentVariable("CLOAKBROWSER_CACHE_DIR", _tmp);
         Environment.SetEnvironmentVariable("CLOAKBROWSER_LICENSE_KEY", null);
         Environment.SetEnvironmentVariable("CLOAKBROWSER_DOWNLOAD_URL", null);
+        Environment.SetEnvironmentVariable("CLOAKBROWSER_RELEASE_CHANNEL", null);
     }
 
     public void Dispose()
@@ -47,8 +50,10 @@ public class LicenseTests : IDisposable
         Environment.SetEnvironmentVariable("CLOAKBROWSER_CACHE_DIR", _prevCacheDir);
         Environment.SetEnvironmentVariable("CLOAKBROWSER_LICENSE_KEY", _prevLicenseEnv);
         Environment.SetEnvironmentVariable("CLOAKBROWSER_DOWNLOAD_URL", _prevDownloadUrl);
+        Environment.SetEnvironmentVariable("CLOAKBROWSER_RELEASE_CHANNEL", _prevReleaseChannel);
         License.ValidateLicenseOverride = null;
         License.ProLatestVersionOverride = null;
+        License.ProLatestReleaseOverride = null;
         License.ActiveSessionCountOverride = null;
         try { if (Directory.Exists(_tmp)) Directory.Delete(_tmp, recursive: true); } catch (IOException) { }
     }
@@ -210,8 +215,13 @@ public class LicenseTests : IDisposable
     [Fact]
     public void ProLatestVersion_rate_limited_reads_marker()
     {
-        var marker = Path.Combine(_tmp, $".last_pro_version_check_{Config.GetPlatformTag()}");
+        var platform = Config.GetPlatformTag();
+        var marker = Path.Combine(_tmp, $".last_pro_version_check_{platform}");
         File.WriteAllText(marker, "148.0.7778.215.2");
+        File.WriteAllText(
+            Path.Combine(_tmp, $".last_pro_version_resolution_{platform}"),
+            "{\"version\":\"148.0.7778.215.2\",\"requested_channel\":\"stable\","
+            + "\"resolved_channel\":\"stable\",\"fallback\":false}");
         // Fresh marker (just written) -> returns cached value without server.
         Assert.Equal("148.0.7778.215.2", License.GetProLatestVersion());
     }
@@ -221,6 +231,169 @@ public class LicenseTests : IDisposable
     {
         License.ProLatestVersionOverride = () => "149.0.0.0";
         Assert.Equal("149.0.0.0", License.GetProLatestVersion());
+    }
+
+    [Fact]
+    public void ProLatestVersion_preview_uses_isolated_endpoint_and_marker()
+    {
+        var recorder = new RecordingHandler(
+            "{\"version\":\"150.0.7871.114.3\",\"requested_channel\":\"preview\","
+            + "\"resolved_channel\":\"stable\",\"fallback\":true}");
+        var original = License.Http;
+        License.Http = new HttpClient(recorder);
+        try
+        {
+            var release = License.GetProLatestRelease("preview");
+            Assert.NotNull(release);
+            Assert.Equal("150.0.7871.114.3", release.Version);
+            Assert.Equal("stable", release.ResolvedChannel);
+            Assert.True(release.Fallback);
+            Assert.EndsWith("?channel=preview", recorder.LastUri);
+            Assert.Equal(
+                "150.0.7871.114.3",
+                File.ReadAllText(Path.Combine(
+                    _tmp, $".last_pro_version_check_preview_{Config.GetPlatformTag()}")));
+            Assert.False(File.Exists(Path.Combine(
+                _tmp, $".last_pro_version_check_{Config.GetPlatformTag()}")));
+        }
+        finally
+        {
+            License.Http.Dispose();
+            License.Http = original;
+        }
+    }
+
+    [Fact]
+    public void ProLatestVersion_old_server_preview_is_stable_fallback()
+    {
+        var recorder = new RecordingHandler("{\"version\":\"150.0.7871.114.3\"}");
+        var original = License.Http;
+        License.Http = new HttpClient(recorder);
+        try
+        {
+            var release = License.GetProLatestRelease("preview");
+            Assert.NotNull(release);
+            Assert.Equal("stable", release.ResolvedChannel);
+            Assert.True(release.Fallback);
+        }
+        finally
+        {
+            License.Http.Dispose();
+            License.Http = original;
+        }
+    }
+
+    [Fact]
+    public void ProLatestVersion_reads_legacy_javascript_sidecar()
+    {
+        var platform = Config.GetPlatformTag();
+        File.WriteAllText(
+            Path.Combine(_tmp, $".last_pro_version_check_preview_{platform}"),
+            "150.0.7871.114.3");
+        File.WriteAllText(
+            Path.Combine(_tmp, $".last_pro_version_resolution_preview_{platform}"),
+            "{\"version\":\"150.0.7871.114.3\",\"requestedChannel\":\"preview\","
+            + "\"resolvedChannel\":\"stable\",\"fallback\":true}");
+
+        var release = License.GetProLatestRelease("preview");
+
+        Assert.NotNull(release);
+        Assert.Equal("stable", release.ResolvedChannel);
+        Assert.True(release.Fallback);
+    }
+
+    [Fact]
+    public void ProLatestVersion_offline_preview_preserves_sidecar_channel()
+    {
+        // Stale marker (rate-limit expired) forces the network path; the server is
+        // unreachable, so the offline branch must reuse the resolution sidecar
+        // instead of mislabeling a genuine preview build as a stable fallback.
+        var platform = Config.GetPlatformTag();
+        var marker = Path.Combine(_tmp, $".last_pro_version_check_preview_{platform}");
+        File.WriteAllText(marker, "151.0.7900.10.1");
+        File.WriteAllText(
+            Path.Combine(_tmp, $".last_pro_version_resolution_preview_{platform}"),
+            "{\"version\":\"151.0.7900.10.1\",\"requested_channel\":\"preview\","
+            + "\"resolved_channel\":\"preview\",\"fallback\":false}");
+        File.SetLastWriteTimeUtc(marker, DateTime.UtcNow.AddHours(-2));
+
+        var original = License.Http;
+        License.Http = new HttpClient(new ThrowingHandler());
+        try
+        {
+            var release = License.GetProLatestRelease("preview");
+            Assert.NotNull(release);
+            Assert.Equal("151.0.7900.10.1", release.Version);
+            Assert.Equal("preview", release.ResolvedChannel);
+            Assert.False(release.Fallback);
+        }
+        finally
+        {
+            License.Http.Dispose();
+            License.Http = original;
+        }
+    }
+
+    [Fact]
+    public void ProLatestVersion_offline_preview_without_sidecar_is_stable_fallback()
+    {
+        var platform = Config.GetPlatformTag();
+        var marker = Path.Combine(_tmp, $".last_pro_version_check_preview_{platform}");
+        File.WriteAllText(marker, "151.0.7900.10.1");
+        File.SetLastWriteTimeUtc(marker, DateTime.UtcNow.AddHours(-2));
+
+        var original = License.Http;
+        License.Http = new HttpClient(new ThrowingHandler());
+        try
+        {
+            var release = License.GetProLatestRelease("preview");
+            Assert.NotNull(release);
+            Assert.Equal("stable", release.ResolvedChannel);
+            Assert.True(release.Fallback);
+        }
+        finally
+        {
+            License.Http.Dispose();
+            License.Http = original;
+        }
+    }
+
+    [Fact]
+    public void ProLatestVersion_environment_selects_preview()
+    {
+        Environment.SetEnvironmentVariable("CLOAKBROWSER_RELEASE_CHANNEL", "preview");
+        var recorder = new RecordingHandler("{\"version\":\"151.0.1234.5\"}");
+        var original = License.Http;
+        License.Http = new HttpClient(recorder);
+        try
+        {
+            License.GetProLatestVersion();
+            Assert.EndsWith("?channel=preview", recorder.LastUri);
+        }
+        finally
+        {
+            License.Http.Dispose();
+            License.Http = original;
+        }
+    }
+
+    [Fact]
+    public void ProLatestVersion_explicit_stable_overrides_preview_environment()
+    {
+        Environment.SetEnvironmentVariable("CLOAKBROWSER_RELEASE_CHANNEL", "preview");
+        var recorder = new RecordingHandler("{\"version\":\"150.0.1234.5\"}");
+        var original = License.Http;
+        License.Http = new HttpClient(recorder);
+        try
+        {
+            License.GetProLatestVersion("stable");
+            Assert.Equal(License.ProVersionUrl, recorder.LastUri);
+        }
+        finally
+        {
+            License.Http.Dispose();
+            License.Http = original;
+        }
     }
 
     [Fact]
@@ -248,6 +421,7 @@ public class LicenseTests : IDisposable
     {
         private readonly string _body;
         public string? LastPlatform { get; private set; }
+        public string? LastUri { get; private set; }
 
         public RecordingHandler(string body) => _body = body;
 
@@ -258,11 +432,20 @@ public class LicenseTests : IDisposable
             LastPlatform = request.Headers.TryGetValues("X-Platform", out var values)
                 ? values.FirstOrDefault()
                 : null;
+            LastUri = request.RequestUri?.ToString();
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(_body),
             });
         }
+    }
+
+    /// <summary>Simulates an unreachable server by throwing on every request.</summary>
+    private sealed class ThrowingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+            => throw new HttpRequestException("network");
     }
 
     // =======================================================================
@@ -427,6 +610,162 @@ public class LicenseTests : IDisposable
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             File.SetUnixFileMode(p,
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+    }
+
+    [Fact]
+    public void Preview_and_stable_effective_versions_are_isolated()
+    {
+        const string stable = "145.0.1000.1";
+        const string preview = "148.0.7778.215.4";
+        MakeProBinary(stable);
+        MakeProBinary(preview);
+        File.WriteAllText(
+            Path.Combine(_tmp, $"latest_pro_version_{Config.GetPlatformTag()}"), stable);
+        File.WriteAllText(
+            Path.Combine(_tmp, $"latest_pro_version_preview_{Config.GetPlatformTag()}"), preview);
+
+        Assert.Equal(stable, Config.GetEffectiveVersion(pro: true, releaseChannel: "stable"));
+        Assert.Equal(preview, Config.GetEffectiveVersion(pro: true, releaseChannel: "preview"));
+        Assert.False(Config.BinarySupportsHeadlessNoViewport("cb_key", releaseChannel: "stable"));
+        Assert.True(Config.BinarySupportsHeadlessNoViewport("cb_key", releaseChannel: "preview"));
+        Assert.True(Config.BinarySupportsMaximizedWindow("cb_key", releaseChannel: "preview"));
+        Assert.False(Config.BinarySupportsHttpProxyInlineAuth("cb_key", releaseChannel: "stable"));
+        Assert.True(Config.BinarySupportsHttpProxyInlineAuth("cb_key", releaseChannel: "preview"));
+        Assert.Equal(preview, Download.BinaryInfo(releaseChannel: "preview").Version);
+
+        var stableProxy = ProxyResolver.Resolve(
+            "http://user:pass@host:8080", licenseKey: "cb_key", releaseChannel: "stable");
+        var previewProxy = ProxyResolver.Resolve(
+            "http://user:pass@host:8080", licenseKey: "cb_key", releaseChannel: "preview");
+        Assert.NotNull(stableProxy.PlaywrightProxy);
+        Assert.Empty(stableProxy.ExtraArgs);
+        Assert.Null(previewProxy.PlaywrightProxy);
+        Assert.Single(previewProxy.ExtraArgs);
+
+        var viewport = CloakLauncher.ResolveContextViewport(new LaunchContextOptions
+        {
+            Headless = true,
+            LicenseKey = "cb_key",
+            ReleaseChannel = "preview",
+        });
+        Assert.Equal(-1, viewport!.Width);
+        Assert.Equal(-1, viewport.Height);
+    }
+
+    [Fact]
+    public void BinaryInfo_threads_channel_into_pro_download_url()
+    {
+        const string version = "151.0.7900.10.1";
+        MakeProBinary(version); // same cached binary satisfies both channels
+        File.WriteAllText(
+            Path.Combine(_tmp, $"latest_pro_version_preview_{Config.GetPlatformTag()}"), version);
+        File.WriteAllText(
+            Path.Combine(_tmp, $"latest_pro_version_{Config.GetPlatformTag()}"), version);
+
+        Assert.EndsWith(
+            "/api/download/latest?channel=preview",
+            Download.BinaryInfo(releaseChannel: "preview").DownloadUrl);
+        var stableUrl = Download.BinaryInfo(releaseChannel: "stable").DownloadUrl;
+        Assert.EndsWith("/api/download/latest", stableUrl);
+        Assert.DoesNotContain("channel=preview", stableUrl);
+    }
+
+    [Fact]
+    public void Pinned_preview_launch_bypasses_latest_lookup_and_markers()
+    {
+        const string pinned = "151.0.1000.1";
+        MakeProBinary(pinned);
+        License.ValidateLicenseOverride = _ => new LicenseInfo(true, "solo", null);
+        License.ProLatestVersionOverride = () => throw new InvalidOperationException("latest lookup must not run");
+
+        Assert.Equal(
+            Config.GetBinaryPath(pinned, pro: true),
+            Download.EnsureBinary("cb_key", pinned, "preview"));
+        Assert.False(File.Exists(Path.Combine(
+            _tmp, $"latest_pro_version_preview_{Config.GetPlatformTag()}")));
+        Assert.False(File.Exists(Path.Combine(
+            _tmp, $"latest_pro_version_{Config.GetPlatformTag()}")));
+    }
+
+    [Fact]
+    public void Preview_without_preview_build_warns_stable_fallback()
+    {
+        const string stable = "150.0.1000.1";
+        MakeProBinary(stable); // stable-fallback build already cached → no download
+        License.ValidateLicenseOverride = _ => new LicenseInfo(true, "solo", null);
+        License.ProLatestReleaseOverride =
+            () => new ProReleaseInfo(stable, "preview", "stable", true);
+        Download.ResetPreviewFallbackWarned();
+
+        var sw = new StringWriter();
+        var orig = Console.Error;
+        Console.SetError(sw);
+        try
+        {
+            Download.EnsureBinary("cb_key", null, "preview");
+        }
+        finally
+        {
+            Console.SetError(orig);
+        }
+        Assert.Contains("no preview build is available", sw.ToString());
+    }
+
+    [Fact]
+    public void Genuine_preview_build_does_not_warn()
+    {
+        const string preview = "151.0.1000.1";
+        MakeProBinary(preview);
+        License.ValidateLicenseOverride = _ => new LicenseInfo(true, "solo", null);
+        License.ProLatestReleaseOverride =
+            () => new ProReleaseInfo(preview, "preview", "preview", false);
+        Download.ResetPreviewFallbackWarned();
+
+        var sw = new StringWriter();
+        var orig = Console.Error;
+        Console.SetError(sw);
+        try
+        {
+            Download.EnsureBinary("cb_key", null, "preview");
+        }
+        finally
+        {
+            Console.SetError(orig);
+        }
+        Assert.DoesNotContain("no preview build is available", sw.ToString());
+    }
+
+    [Fact]
+    public void CheckForProUpdate_preview_advances_only_preview_marker()
+    {
+        const string stable = "150.0.1000.1";
+        const string preview = "151.0.1000.1";
+        MakeProBinary(stable);
+        MakeProBinary(preview);
+        var stableMarker = Path.Combine(_tmp, $"latest_pro_version_{Config.GetPlatformTag()}");
+        File.WriteAllText(stableMarker, stable);
+        License.ProLatestVersionOverride = () => preview;
+
+        Assert.Equal(preview, Download.CheckForProUpdate("cb_key", "preview"));
+        Assert.Equal(stable, File.ReadAllText(stableMarker));
+        Assert.Equal(
+            preview,
+            File.ReadAllText(Path.Combine(
+                _tmp, $"latest_pro_version_preview_{Config.GetPlatformTag()}")));
+    }
+
+    [Fact]
+    public void ReleaseChannel_api_shape_preserves_cancellation_token_positions()
+    {
+        Assert.Null(new LaunchOptions().ReleaseChannel);
+
+        var ensureParams = typeof(Download).GetMethod(nameof(Download.EnsureBinaryAsync))!.GetParameters();
+        Assert.Equal(typeof(CancellationToken), ensureParams[2].ParameterType);
+        Assert.Equal("releaseChannel", ensureParams[3].Name);
+
+        var updateParams = typeof(Download).GetMethod(nameof(Download.CheckForProUpdateAsync))!.GetParameters();
+        Assert.Equal(typeof(CancellationToken), updateParams[1].ParameterType);
+        Assert.Equal("releaseChannel", updateParams[2].Name);
     }
 
     [Fact]

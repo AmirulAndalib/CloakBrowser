@@ -110,22 +110,39 @@ static void PrintDiagnostics(Dictionary<string, object?> diag)
     {
         if ((string)binary["tier"]! == "override")
             Console.WriteLine("Version:   set via CLOAKBROWSER_BINARY_PATH (see Launch line)");
-        else if (binary.TryGetValue("latest_version", out var lv) && lv is string latest && !string.IsNullOrEmpty(latest))
-        {
-            // Pro: show what launches now AND the server's latest, so the two can't diverge.
-            Console.WriteLine($"Version:   {binary["version"]} ({binary["tier"]}) — will launch");
-            if (latest == binary["version"] as string)
-                Console.WriteLine($"Latest:    {latest} (up to date)");
-            else if (binary.TryGetValue("pinned", out var p) && p is true)
-                Console.WriteLine($"Latest:    {latest} (available — pinned; unset CLOAKBROWSER_VERSION to upgrade)");
-            else
-                Console.WriteLine($"Latest:    {latest} (available — next launch upgrades)");
-        }
-        else if (binary["version"] is null)
-            // Pro with no cached build and no server answer (e.g. offline).
-            Console.WriteLine($"Version:   not downloaded yet ({binary["tier"]}) — next launch downloads the latest");
         else
-            Console.WriteLine($"Version:   {binary["version"]} ({binary["tier"]})");
+        {
+            if (binary.TryGetValue("channel_fallback", out var fallback) && fallback is true)
+                Console.WriteLine("Channel:   Preview → Stable fallback");
+            else
+            {
+                var channel = binary.GetValueOrDefault("resolved_channel") as string
+                    ?? binary.GetValueOrDefault("requested_channel") as string
+                    ?? "stable";
+                Console.WriteLine($"Channel:   {TitleCase(channel)}");
+            }
+            if (binary.TryGetValue("latest_version", out var lv) && lv is string latest && !string.IsNullOrEmpty(latest))
+            {
+                // Pro: show what launches now AND the server's latest, so the two can't diverge.
+                Console.WriteLine($"Version:   {binary["version"]} ({binary["tier"]}) — next launch");
+                if (latest == binary["version"] as string && binary["installed"] is true)
+                    Console.WriteLine($"Latest:    {latest} (up to date)");
+                else if (latest == binary["version"] as string)
+                    Console.WriteLine($"Latest:    {latest} (downloads on next launch)");
+                else if (binary.TryGetValue("pinned", out var p) && p is true)
+                    Console.WriteLine($"Latest:    {latest} (available — pinned; unset CLOAKBROWSER_VERSION to upgrade)");
+                else
+                    Console.WriteLine($"Latest:    {latest} (server-resolved; installed build retained)");
+                if (binary.GetValueOrDefault("installed_version") is string installedVersion
+                    && installedVersion != binary["version"] as string)
+                    Console.WriteLine($"Installed: {installedVersion}");
+            }
+            else if (binary["version"] is null)
+                // Pro with no cached build and no server answer (e.g. offline).
+                Console.WriteLine($"Version:   not downloaded yet ({binary["tier"]}) — next launch downloads the latest");
+            else
+                Console.WriteLine($"Version:   {binary["version"]} ({binary["tier"]})");
+        }
         Console.WriteLine($"Binary:    {binary["path"]}");
         Console.WriteLine($"Installed: {binary["installed"]}");
         if (binary["cache_dir"] is string cd && !string.IsNullOrEmpty(cd))

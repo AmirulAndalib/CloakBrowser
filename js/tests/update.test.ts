@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
-  CHROMIUM_VERSION,
+  binarySupportsHeadlessNoViewport,
+  binarySupportsHttpProxyInlineAuth,
+  binarySupportsMaximizedWindow,
   getChromiumVersion,
+  getBinaryPath,
   getDownloadUrl,
   getEffectiveVersion,
   getPlatformTag,
@@ -11,7 +15,7 @@ import {
   versionNewer,
 } from "../src/config.js";
 import {
-  binaryInfo,
+  checkForProUpdate,
   checkForUpdate,
   checkWrapperUpdate,
   clearCache,
@@ -20,6 +24,7 @@ import {
   getLatestChromiumVersion,
   parseChecksums,
   resetWrapperUpdateChecked,
+  resetPreviewFallbackWarned,
 } from "../src/download.js";
 
 describe("version comparison", () => {
@@ -85,8 +90,6 @@ describe("download URL", () => {
 });
 
 describe("latest version (platform-aware)", () => {
-  const platformTarball = `cloakbrowser-${getPlatformTag()}.tar.gz`;
-
   function makeAssets(platforms: string[]) {
     return platforms.map((p) => ({ name: `cloakbrowser-${p}.tar.gz` }));
   }
@@ -114,7 +117,7 @@ describe("latest version (platform-aware)", () => {
   });
 
   it("skips release without platform asset", async () => {
-    const spy = mockFetch([
+    mockFetch([
       {
         tag_name: "chromium-v145.0.7718.0",
         draft: false,
@@ -363,6 +366,186 @@ describe("effective version", () => {
       if (orig) process.env.CLOAKBROWSER_CACHE_DIR = orig;
       else delete process.env.CLOAKBROWSER_CACHE_DIR;
     }
+  });
+});
+
+describe("preview Pro selection", () => {
+  let cacheDir: string;
+  let originalCacheDir: string | undefined;
+
+  function createProBinary(version: string): string {
+    const binaryPath = getBinaryPath(version, true);
+    fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+    fs.writeFileSync(binaryPath, "fake");
+    fs.chmodSync(binaryPath, 0o755);
+    return binaryPath;
+  }
+
+  beforeEach(() => {
+    originalCacheDir = process.env.CLOAKBROWSER_CACHE_DIR;
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "cloakbrowser-preview-"));
+    process.env.CLOAKBROWSER_CACHE_DIR = cacheDir;
+    delete process.env.CLOAKBROWSER_BINARY_PATH;
+    delete process.env.CLOAKBROWSER_RELEASE_CHANNEL;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+    if (originalCacheDir === undefined) delete process.env.CLOAKBROWSER_CACHE_DIR;
+    else process.env.CLOAKBROWSER_CACHE_DIR = originalCacheDir;
+    delete process.env.CLOAKBROWSER_RELEASE_CHANNEL;
+  });
+
+  it("uses the selected channel for binary capability gates", () => {
+    const stable = "145.0.1000.1";
+    const preview = "148.0.7778.215.4";
+    createProBinary(stable);
+    createProBinary(preview);
+    fs.writeFileSync(
+      path.join(cacheDir, `latest_pro_version_${getPlatformTag()}`),
+      stable,
+    );
+    fs.writeFileSync(
+      path.join(cacheDir, `latest_pro_version_preview_${getPlatformTag()}`),
+      preview,
+    );
+
+    expect(binarySupportsHeadlessNoViewport("cb_test", undefined, "stable")).toBe(false);
+    expect(binarySupportsHeadlessNoViewport("cb_test", undefined, "preview")).toBe(true);
+    expect(binarySupportsMaximizedWindow("cb_test", undefined, "preview")).toBe(true);
+    expect(binarySupportsHttpProxyInlineAuth("cb_test", undefined, "stable")).toBe(false);
+    expect(binarySupportsHttpProxyInlineAuth("cb_test", undefined, "preview")).toBe(true);
+  });
+
+  it("keeps a pinned preview launch isolated from latest markers", async () => {
+    const pinned = "151.0.1000.1";
+    const binaryPath = createProBinary(pinned);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ valid: true, plan: "solo", expires: null }),
+    } as Response);
+
+    await expect(ensureBinary("cb_test", pinned, "preview")).resolves.toBe(binaryPath);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0]![0])).toContain("/api/license/validate");
+    expect(
+      fs.existsSync(path.join(cacheDir, `latest_pro_version_preview_${getPlatformTag()}`)),
+    ).toBe(false);
+    expect(
+      fs.existsSync(path.join(cacheDir, `latest_pro_version_${getPlatformTag()}`)),
+    ).toBe(false);
+  });
+
+  it("uses preview latest without changing the stable marker", async () => {
+    const stable = "150.0.1000.1";
+    const preview = "151.0.1000.1";
+    createProBinary(stable);
+    const previewPath = createProBinary(preview);
+    const stableMarker = path.join(cacheDir, `latest_pro_version_${getPlatformTag()}`);
+    fs.writeFileSync(stableMarker, stable);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes("/api/license/validate")) {
+        return {
+          ok: true,
+          json: async () => ({ valid: true, plan: "solo", expires: null }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ version: preview }),
+      } as Response;
+    });
+
+    await expect(ensureBinary("cb_test", undefined, "preview")).resolves.toBe(previewPath);
+
+    expect(fetchSpy.mock.calls.some(([url]) => String(url).endsWith("?channel=preview"))).toBe(true);
+    expect(fs.readFileSync(stableMarker, "utf-8")).toBe(stable);
+    expect(
+      fs.readFileSync(
+        path.join(cacheDir, `latest_pro_version_preview_${getPlatformTag()}`),
+        "utf-8",
+      ),
+    ).toBe(preview);
+  });
+
+  it("manual preview update advances only the preview marker", async () => {
+    const stable = "150.0.1000.1";
+    const preview = "151.0.1000.1";
+    createProBinary(stable);
+    createProBinary(preview);
+    const stableMarker = path.join(cacheDir, `latest_pro_version_${getPlatformTag()}`);
+    fs.writeFileSync(stableMarker, stable);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({ version: preview }),
+    } as Response);
+
+    await expect(checkForProUpdate("cb_test", "preview")).resolves.toBe(preview);
+
+    expect(fs.readFileSync(stableMarker, "utf-8")).toBe(stable);
+    expect(
+      fs.readFileSync(
+        path.join(cacheDir, `latest_pro_version_preview_${getPlatformTag()}`),
+        "utf-8",
+      ),
+    ).toBe(preview);
+  });
+
+  it("warns when preview falls back to stable (no preview build for platform)", async () => {
+    resetPreviewFallbackWarned();
+    const stable = "150.0.1000.1";
+    createProBinary(stable); // stable-fallback build already cached → no download
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/api/license/validate")) {
+        return { ok: true, json: async () => ({ valid: true, plan: "solo", expires: null }) } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          version: stable,
+          requested_channel: "preview",
+          resolved_channel: "stable",
+          fallback: true,
+        }),
+      } as Response;
+    });
+
+    await ensureBinary("cb_test", undefined, "preview");
+
+    expect(
+      errSpy.mock.calls.some((c) => String(c[0]).includes("no preview build is available")),
+    ).toBe(true);
+  });
+
+  it("does not warn for a genuine preview build", async () => {
+    resetPreviewFallbackWarned();
+    const preview = "151.0.1000.1";
+    createProBinary(preview);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      if (String(input).includes("/api/license/validate")) {
+        return { ok: true, json: async () => ({ valid: true, plan: "solo", expires: null }) } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          version: preview,
+          requested_channel: "preview",
+          resolved_channel: "preview",
+          fallback: false,
+        }),
+      } as Response;
+    });
+
+    await ensureBinary("cb_test", undefined, "preview");
+
+    expect(
+      errSpy.mock.calls.some((c) => String(c[0]).includes("no preview build is available")),
+    ).toBe(false);
   });
 });
 

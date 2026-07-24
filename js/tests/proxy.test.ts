@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import { parseProxyUrl, isSocksProxy, resolveProxyConfig } from "../src/proxy.js";
 import * as config from "../src/config.js";
 import type { LaunchOptions } from "../src/types.js";
@@ -450,6 +452,54 @@ describe("resolveProxyConfig", () => {
       expect(proxyArgs).toEqual([]);
     } finally {
       restorePlatform();
+    }
+  });
+
+  it("uses the selected release channel for inline-auth gating", () => {
+    const originalCacheDir = process.env.CLOAKBROWSER_CACHE_DIR;
+    const cacheDir = `/tmp/cloakbrowser-proxy-preview-${Date.now()}`;
+    process.env.CLOAKBROWSER_CACHE_DIR = cacheDir;
+    try {
+      for (const [channel, version] of [
+        ["stable", "145.0.1000.1"],
+        ["preview", "148.0.7778.215.4"],
+      ] as const) {
+        const binaryPath = config.getBinaryPath(version, true);
+        fs.mkdirSync(path.dirname(binaryPath), { recursive: true });
+        fs.writeFileSync(binaryPath, "fake");
+        fs.chmodSync(binaryPath, 0o755);
+        const markerPrefix = channel === "preview"
+          ? "latest_pro_version_preview"
+          : "latest_pro_version";
+        fs.writeFileSync(
+          path.join(cacheDir, `${markerPrefix}_${config.getPlatformTag()}`),
+          version,
+        );
+      }
+
+      const stable = resolveProxyConfig(
+        "http://user:pass@proxy:8080",
+        undefined,
+        "cb_test",
+        "stable",
+      );
+      const preview = resolveProxyConfig(
+        "http://user:pass@proxy:8080",
+        undefined,
+        "cb_test",
+        "preview",
+      );
+
+      expect(stable.proxyOption).toBeDefined();
+      expect(stable.proxyArgs).toEqual([]);
+      expect(preview.proxyOption).toBeUndefined();
+      expect(preview.proxyArgs).toEqual([
+        "--proxy-server=http://user:pass@proxy:8080",
+      ]);
+    } finally {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+      if (originalCacheDir === undefined) delete process.env.CLOAKBROWSER_CACHE_DIR;
+      else process.env.CLOAKBROWSER_CACHE_DIR = originalCacheDir;
     }
   });
 });

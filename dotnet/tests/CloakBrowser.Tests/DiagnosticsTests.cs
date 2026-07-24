@@ -55,4 +55,42 @@ public class DiagnosticsTests
             try { Directory.Delete(tmp, recursive: true); } catch { /* best-effort */ }
         }
     }
+
+    [Fact]
+    public void Preview_reports_stable_fallback_and_next_launch_version()
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(tmp);
+        string? prevCache = Environment.GetEnvironmentVariable("CLOAKBROWSER_CACHE_DIR");
+        string? prevKey = Environment.GetEnvironmentVariable("CLOAKBROWSER_LICENSE_KEY");
+        string? prevChannel = Environment.GetEnvironmentVariable("CLOAKBROWSER_RELEASE_CHANNEL");
+        try
+        {
+            Environment.SetEnvironmentVariable("CLOAKBROWSER_CACHE_DIR", tmp);
+            Environment.SetEnvironmentVariable("CLOAKBROWSER_LICENSE_KEY", "cb_test");
+            Environment.SetEnvironmentVariable("CLOAKBROWSER_RELEASE_CHANNEL", "preview");
+            License.ValidateLicenseOverride = _ => new LicenseInfo(true, "business", null);
+            License.ProLatestReleaseOverride = () =>
+                new ProReleaseInfo("150.0.7871.114.3", "preview", "stable", true);
+            License.ActiveSessionCountOverride = _ => null;
+
+            var diag = Diagnostics.Collect(quick: false);
+            var binary = Assert.IsType<Dictionary<string, object?>>(diag["binary"]);
+
+            Assert.Equal("preview", binary["requested_channel"]);
+            Assert.Equal("stable", binary["resolved_channel"]);
+            Assert.Equal(true, binary["channel_fallback"]);
+            Assert.Equal("150.0.7871.114.3", binary["version"]);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CLOAKBROWSER_CACHE_DIR", prevCache);
+            Environment.SetEnvironmentVariable("CLOAKBROWSER_LICENSE_KEY", prevKey);
+            Environment.SetEnvironmentVariable("CLOAKBROWSER_RELEASE_CHANNEL", prevChannel);
+            License.ValidateLicenseOverride = null;
+            License.ProLatestReleaseOverride = null;
+            License.ActiveSessionCountOverride = null;
+            try { Directory.Delete(tmp, recursive: true); } catch { /* best-effort */ }
+        }
+    }
 }

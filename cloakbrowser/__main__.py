@@ -120,10 +120,12 @@ def _effective_binary(entitled_pro: bool, quick: bool = False) -> dict:
     """
     from .config import (
         CHROMIUM_VERSION,
+        _version_newer,
         get_binary_dir,
         get_binary_path,
         get_effective_version,
         get_local_binary_override,
+        normalize_release_channel,
         normalize_requested_version,
     )
 
@@ -142,31 +144,55 @@ def _effective_binary(entitled_pro: bool, quick: bool = False) -> dict:
         }
 
     requested = normalize_requested_version(None)
+    requested_channel = normalize_release_channel(None)
 
     # For a Pro license, surface the server's latest separately from the version
     # that will actually launch, so `info` can never silently diverge from launch
     # (the divergence a customer hit: info showed latest, launch ran a stale cache).
     # --quick keeps `info` fully network-free (skip the server latest lookup).
     latest_version = None
+    resolved_channel = None
+    channel_fallback = False
     if entitled_pro and not quick:
-        from .license import get_pro_latest_version
+        from .license import get_pro_latest_release
 
-        latest_version = get_pro_latest_version()
+        latest_release = get_pro_latest_release(requested_channel)
+        if latest_release:
+            latest_version = latest_release.version
+            resolved_channel = latest_release.resolved_channel
+            channel_fallback = latest_release.fallback
 
+    installed_version = None
     if requested:
         version = requested
     elif entitled_pro:
-        # "Will launch now" is the cached Pro build; if none is cached, the next
-        # launch downloads latest_version. get_effective_version(pro=True) returns
-        # None (never the free base) when nothing is cached.
-        version = get_effective_version(pro=True) or latest_version
+        # Mirror ensure_binary: Preview/Stable resolution picks what the next
+        # launch will run, while AUTO_UPDATE=false keeps an installed channel build.
+        installed_version = get_effective_version(
+            pro=True, release_channel=requested_channel
+        )
+        auto_update = os.environ.get("CLOAKBROWSER_AUTO_UPDATE", "true").lower()
+        updates_enabled = auto_update != "false"
+        if installed_version and not updates_enabled:
+            version = installed_version
+        elif latest_version and (
+            not installed_version or _version_newer(latest_version, installed_version)
+        ):
+            version = latest_version
+        else:
+            version = installed_version or latest_version
     else:
         version = get_effective_version()
+        installed_version = version
 
     path = get_binary_path(version, pro=entitled_pro) if version else None
     return {
         "version": version,
         "latest_version": latest_version,
+        "requested_channel": requested_channel,
+        "resolved_channel": resolved_channel,
+        "channel_fallback": channel_fallback,
+        "installed_version": installed_version,
         "pinned": bool(requested),
         "tier": "pro" if entitled_pro else "free",
         "bundled_version": CHROMIUM_VERSION,
@@ -282,20 +308,33 @@ def _print_diagnostics(diag: dict) -> None:
         if binary["tier"] == "override":
             print("Version:   set via CLOAKBROWSER_BINARY_PATH (see Launch line)")
         else:
+            requested_channel = binary.get("requested_channel", "stable")
+            resolved_channel = binary.get("resolved_channel")
+            if binary.get("channel_fallback"):
+                print("Channel:   Preview → Stable fallback")
+            elif resolved_channel:
+                print(f"Channel:   {resolved_channel.capitalize()}")
+            else:
+                print(f"Channel:   {requested_channel.capitalize()}")
             latest = binary.get("latest_version")
             if latest:
                 # Pro: show what launches now AND the server's latest, so the two
                 # can never silently diverge.
-                print(f"Version:   {binary['version']} ({binary['tier']}) — will launch")
-                if latest == binary["version"]:
+                print(f"Version:   {binary['version']} ({binary['tier']}) — next launch")
+                if latest == binary["version"] and binary.get("installed"):
                     print(f"Latest:    {latest} (up to date)")
+                elif latest == binary["version"]:
+                    print(f"Latest:    {latest} (downloads on next launch)")
                 elif binary.get("pinned"):
                     print(
                         f"Latest:    {latest} (available — pinned; unset "
                         "CLOAKBROWSER_VERSION to upgrade)"
                     )
                 else:
-                    print(f"Latest:    {latest} (available — next launch upgrades)")
+                    print(f"Latest:    {latest} (server-resolved; installed build retained)")
+                installed_version = binary.get("installed_version")
+                if installed_version and installed_version != binary["version"]:
+                    print(f"Installed: {installed_version}")
             elif binary["version"] is None:
                 # Pro with no cached build and no server answer (e.g. offline).
                 print(
@@ -394,7 +433,10 @@ def cmd_update(args: argparse.Namespace) -> None:
     if entitled_pro:
         from .license import resolve_license_key
 
-        new_version = check_for_pro_update(resolve_license_key(None))
+        key = resolve_license_key(None)
+        if not key:
+            raise RuntimeError("Pro license key disappeared during update")
+        new_version = check_for_pro_update(key)
         label = "Pro Chromium"
     else:
         new_version = check_for_update()

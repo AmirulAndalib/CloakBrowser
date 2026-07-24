@@ -281,7 +281,9 @@ internal static class ProxyResolver
     }
 
     /// <summary>Resolve a proxy into Playwright options + extra Chrome args (one or both empty).</summary>
-    public static ProxyResolution Resolve(object? proxy, string? browserVersion = null, string? licenseKey = null)
+    public static ProxyResolution Resolve(
+        object? proxy, string? browserVersion = null, string? licenseKey = null,
+        string? releaseChannel = null)
     {
         if (proxy == null)
             return new ProxyResolution(null, new List<string>());
@@ -316,7 +318,8 @@ internal static class ProxyResolver
             string s => HasCredentials(s),
             _ => false,
         };
-        if (hasCreds && Config.BinarySupportsHttpProxyInlineAuth(licenseKey, browserVersion))
+        if (hasCreds && Config.BinarySupportsHttpProxyInlineAuth(
+            licenseKey, browserVersion, releaseChannel))
         {
             if (proxy is ProxySettings psd)
             {

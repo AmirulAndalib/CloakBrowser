@@ -116,6 +116,17 @@ public static class Config
         @"^[0-9]+(?:\.[0-9]+){3,4}$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    /// <summary>Return the requested release channel, defaulting to Stable.</summary>
+    public static string NormalizeReleaseChannel(string? releaseChannel = null)
+    {
+        var raw = releaseChannel
+            ?? Environment.GetEnvironmentVariable("CLOAKBROWSER_RELEASE_CHANNEL")
+            ?? "stable";
+        return string.Equals(raw.Trim(), "preview", StringComparison.OrdinalIgnoreCase)
+            ? "preview"
+            : "stable";
+    }
+
     /// <summary>
     /// Return an explicit Chromium version pin from arg/env, or null.
     ///
@@ -248,14 +259,17 @@ public static class Config
     /// back to the free binary, so there is deliberately no free-version fallback for Pro —
     /// callers treat <c>null</c> as "resolve the latest Pro version from the server".
     /// </summary>
-    public static string? GetEffectiveVersion(bool pro = false)
+    public static string? GetEffectiveVersion(bool pro = false, string? releaseChannel = null)
     {
         var baseVersion = GetChromiumVersion();
         var cache = GetCacheDir();
 
         if (pro)
         {
-            var proMarker = Path.Combine(cache, $"latest_pro_version_{GetPlatformTag()}");
+            var markerPrefix = NormalizeReleaseChannel(releaseChannel) == "preview"
+                ? "latest_pro_version_preview"
+                : "latest_pro_version";
+            var proMarker = Path.Combine(cache, $"{markerPrefix}_{GetPlatformTag()}");
             if (File.Exists(proMarker))
             {
                 try
@@ -373,8 +387,10 @@ public static class Config
         $"{DownloadBaseUrl}/releases/pro/chromium-v{version}";
 
     /// <summary>Return the "latest Pro" display download URL (shown by binary_info for Pro installs).</summary>
-    public static string GetProLatestDownloadUrl() =>
-        $"{DownloadBaseUrl}/api/download/latest";
+    public static string GetProLatestDownloadUrl(string? releaseChannel = null) =>
+        NormalizeReleaseChannel(releaseChannel) == "preview"
+            ? $"{DownloadBaseUrl}/api/download/latest?channel=preview"
+            : $"{DownloadBaseUrl}/api/download/latest";
 
     // -----------------------------------------------------------------------
     // Local binary override (skip download, use your own build)
@@ -399,7 +415,8 @@ public static class Config
     /// ones keep the fixed default viewport. A local override binary
     /// (<c>CLOAKBROWSER_BINARY_PATH</c>) is unknown-version, so stay on the safe path.
     /// </summary>
-    public static bool BinarySupportsHeadlessNoViewport(string? licenseKey = null, string? browserVersion = null)
+    public static bool BinarySupportsHeadlessNoViewport(
+        string? licenseKey = null, string? browserVersion = null, string? releaseChannel = null)
     {
         if (HeadlessNoViewportMinVersion == null)
             return false;
@@ -427,7 +444,7 @@ public static class Config
         else
         {
             bool pro = !string.IsNullOrEmpty(License.ResolveLicenseKey(licenseKey));
-            version = GetEffectiveVersion(pro);
+            version = GetEffectiveVersion(pro, releaseChannel);
         }
         // No cached Pro build resolvable (GetEffectiveVersion returned null) → fail safe.
         if (version == null) return false;
@@ -450,8 +467,9 @@ public static class Config
     /// Shares <see cref="HeadlessNoViewportMinVersion"/>; own name so the two can
     /// diverge later. Python, JS and .NET mirror this gate.
     /// </summary>
-    public static bool BinarySupportsMaximizedWindow(string? licenseKey = null, string? browserVersion = null)
-        => BinarySupportsHeadlessNoViewport(licenseKey, browserVersion);
+    public static bool BinarySupportsMaximizedWindow(
+        string? licenseKey = null, string? browserVersion = null, string? releaseChannel = null)
+        => BinarySupportsHeadlessNoViewport(licenseKey, browserVersion, releaseChannel);
 
     // First Chromium build, per platform, whose binary can take inline HTTP proxy
     // credentials (Chromium-native --proxy-server=http://user:pass@host). Below the
@@ -483,7 +501,8 @@ public static class Config
     /// override with no declared version is unknown-version, so stay on the safe
     /// fallback. Python, JS and .NET mirror this gate.
     /// </summary>
-    public static bool BinarySupportsHttpProxyInlineAuth(string? licenseKey = null, string? browserVersion = null)
+    public static bool BinarySupportsHttpProxyInlineAuth(
+        string? licenseKey = null, string? browserVersion = null, string? releaseChannel = null)
     {
         string tag;
         try
@@ -517,7 +536,7 @@ public static class Config
         else
         {
             bool pro = !string.IsNullOrEmpty(License.ResolveLicenseKey(licenseKey));
-            version = GetEffectiveVersion(pro);
+            version = GetEffectiveVersion(pro, releaseChannel);
         }
         if (version == null) return false;
         try

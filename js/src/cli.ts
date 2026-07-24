@@ -18,11 +18,13 @@ import {
   getBinaryPath,
   getBinaryDir,
   getEffectiveVersion,
+  normalizeReleaseChannel,
   normalizeRequestedVersion,
+  versionNewer,
   CHROMIUM_VERSION,
 } from "./config.js";
 import { countFontsPresent, WINDOWS_FONT_TELLS, OFFICE_FONT_TELLS } from "./fonts.js";
-import { resolveLicenseKey, validateLicense, getProLatestVersion, getActiveSessionCount, type LicenseInfo } from "./license.js";
+import { resolveLicenseKey, validateLicense, getProLatestRelease, getActiveSessionCount, type LicenseInfo } from "./license.js";
 import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -138,30 +140,53 @@ async function effectiveBinary(
     };
   }
   const requested = normalizeRequestedVersion();
+  const requestedChannel = normalizeReleaseChannel();
 
   // For a Pro license, surface the server's latest separately from the version
   // that will actually launch, so `info` can never silently diverge from launch
   // (the divergence a customer hit: info showed latest, launch ran a stale cache).
   // --quick keeps `info` fully network-free (skip the server latest lookup).
   let latestVersion: string | null = null;
+  let resolvedChannel: "stable" | "preview" | null = null;
+  let channelFallback = false;
   if (entitledPro && !quick) {
-    latestVersion = await getProLatestVersion();
+    const latestRelease = await getProLatestRelease(requestedChannel);
+    if (latestRelease) {
+      latestVersion = latestRelease.version;
+      resolvedChannel = latestRelease.resolvedChannel;
+      channelFallback = latestRelease.fallback;
+    }
   }
 
   let version: string | null;
+  let installedVersion: string | null = null;
   if (requested) {
     version = requested;
   } else if (entitledPro) {
-    // "Will launch now" is the cached Pro build; if none is cached, the next launch
-    // downloads latestVersion. getEffectiveVersion(true) returns null (never free).
-    version = getEffectiveVersion(true) ?? latestVersion;
+    // Mirror ensureBinary: report what the next launch resolves to, while
+    // CLOAKBROWSER_AUTO_UPDATE=false retains an installed channel build.
+    installedVersion = getEffectiveVersion(true, requestedChannel);
+    const autoUpdate = (process.env.CLOAKBROWSER_AUTO_UPDATE ?? "true").toLowerCase();
+    const updatesEnabled = autoUpdate !== "false";
+    if (installedVersion && !updatesEnabled) {
+      version = installedVersion;
+    } else if (latestVersion && (!installedVersion || versionNewer(latestVersion, installedVersion))) {
+      version = latestVersion;
+    } else {
+      version = installedVersion ?? latestVersion;
+    }
   } else {
     version = getEffectiveVersion(false);
+    installedVersion = version;
   }
   const binPath = version ? getBinaryPath(version, entitledPro) : null;
   return {
     version,
     latest_version: latestVersion,
+    requested_channel: requestedChannel,
+    resolved_channel: resolvedChannel,
+    channel_fallback: channelFallback,
+    installed_version: installedVersion,
     pinned: Boolean(requested),
     tier: entitledPro ? "pro" : "free",
     bundled_version: CHROMIUM_VERSION,
@@ -262,25 +287,38 @@ function printDiagnostics(diag: Record<string, any>): void {
   } else {
     if (binary.tier === "override") {
       console.log("Version:   set via CLOAKBROWSER_BINARY_PATH (see Launch line)");
-    } else if (binary.latest_version) {
+    } else {
+      if (binary.channel_fallback) {
+        console.log("Channel:   Preview → Stable fallback");
+      } else {
+        const channel = binary.resolved_channel ?? binary.requested_channel ?? "stable";
+        console.log(`Channel:   ${channel.charAt(0).toUpperCase()}${channel.slice(1)}`);
+      }
+      if (binary.latest_version) {
       // Pro: show what launches now AND the server's latest, so the two can't diverge.
-      console.log(`Version:   ${binary.version} (${binary.tier}) — will launch`);
-      if (binary.latest_version === binary.version) {
+      console.log(`Version:   ${binary.version} (${binary.tier}) — next launch`);
+      if (binary.latest_version === binary.version && binary.installed) {
         console.log(`Latest:    ${binary.latest_version} (up to date)`);
+      } else if (binary.latest_version === binary.version) {
+        console.log(`Latest:    ${binary.latest_version} (downloads on next launch)`);
       } else if (binary.pinned) {
         console.log(
           `Latest:    ${binary.latest_version} (available — pinned; unset CLOAKBROWSER_VERSION to upgrade)`
         );
       } else {
-        console.log(`Latest:    ${binary.latest_version} (available — next launch upgrades)`);
+        console.log(`Latest:    ${binary.latest_version} (server-resolved; installed build retained)`);
       }
-    } else if (binary.version === null) {
-      // Pro with no cached build and no server answer (e.g. offline).
-      console.log(
-        `Version:   not downloaded yet (${binary.tier}) — next launch downloads the latest`
-      );
-    } else {
-      console.log(`Version:   ${binary.version} (${binary.tier})`);
+      if (binary.installed_version && binary.installed_version !== binary.version) {
+        console.log(`Installed: ${binary.installed_version}`);
+      }
+      } else if (binary.version === null) {
+        // Pro with no cached build and no server answer (e.g. offline).
+        console.log(
+          `Version:   not downloaded yet (${binary.tier}) — next launch downloads the latest`
+        );
+      } else {
+        console.log(`Version:   ${binary.version} (${binary.tier})`);
+      }
     }
     console.log(`Binary:    ${binary.path}`);
     console.log(`Installed: ${binary.installed}`);

@@ -8,13 +8,18 @@ Changes are tagged: **[wrapper]** for Python/JS wrapper, **[binary]** for Chromi
 
 ## [Unreleased]
 
-- **[wrapper]** Preview now means the newest build available for the current platform. A newer Preview is selected when present; otherwise it resolves to Stable, including when Stable has moved ahead. Python, JavaScript, and .NET CLI diagnostics report the requested and resolved channel plus the exact version that will launch.
-- **[binary]** Chromium **150.0.7871.114.4** (Pro, Linux x64 + arm64) — 73 source-level patches (up from 71). A coherence release. Pro license required; v146 stays free.
+## [0.5.2] — 2026-07-25
+
+- **[wrapper]** **Preview release channel.** Opt in with `release_channel="preview"` (`releaseChannel` in JavaScript, `ReleaseChannel` in .NET) or `CLOAKBROWSER_RELEASE_CHANNEL=preview` for every launch and CLI command. Preview means the newest build available for the current platform: a newer Preview is selected when present, otherwise it resolves to Stable, including when Stable has moved ahead. It is a standing setting, not a version pin, so a platform with no Preview build simply tracks Stable until one exists. CLI diagnostics report the requested and resolved channel plus the exact version that will launch. Python, JavaScript, and .NET.
+- **[wrapper]** `cloakbrowser info` now prints the wrapper version alongside the binary diagnostics, so a bug report carries both without a second command. Python, JavaScript, and .NET.
+- **[docker]** `cloakserve` gained `POST /fingerprint/{seed}/close`, which tears down that seed's browser immediately and frees its slot instead of waiting out the idle timeout. The profile is preserved and the call is idempotent.
+- **[binary]** Chromium **150.0.7871.114.4** (Pro, Linux x64 + arm64) — 73 source-level patches (up from 71). A coherence release. Windows and macOS stay on Stable `150.0.7871.114.3`; the fixes below that apply to those platforms ship with their next build.
   - **Consistent identity under CDP user-agent overrides** — subframes no longer disagree with the top frame about the browser identity when a custom user agent is set over CDP. Mainly affects Puppeteer, which sets one on every page session.
   - **Closer Windows persona text rendering** — font availability and text measurements track a real Windows install more closely.
   - **Complete locale coverage** — every supported locale now resolves to a coherent profile, with Greek (`el-GR`, `el-CY`) added.
-  - **Headed window geometry coherence** on the Windows and macOS personas; headless is unchanged.
-  - **More stable results across seeds** when running natively on macOS and Linux.
+  - **Headed window geometry coherence** on the Windows persona; headless is unchanged.
+  - **More stable results across seeds** when the spoofed platform matches the host, i.e. the native Linux persona.
+  - **One consistent reported build number** — `--version` and `chrome://version` now read the public version from a single source. Web-reachable surfaces, including the user agent, are unchanged.
   - No unsupported-flag warning bar when the sandbox is disabled, as required when running as root (e.g. in Docker).
 
 ## [0.5.1] — 2026-07-23

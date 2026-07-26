@@ -214,21 +214,28 @@ internal static class Diagnostics
     }
 
     // Launch `<binary> --version` to prove it runs.
+    //
+    // Chromium only handles --version on POSIX, so on Windows the switch is ignored
+    // and a browser starts instead of printing — the probe then times out and a
+    // healthy install looks broken. --no-startup-window makes it exit right away
+    // without putting a window on screen; a broken binary still exits non-zero, so
+    // the check keeps its meaning. It just reports no version there, as nothing is
+    // printed.
     private static (bool ok, string version, string error) BinaryVersion(string binaryPath)
     {
         try
         {
-            using var proc = new Process
+            var startInfo = new ProcessStartInfo
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = binaryPath,
-                    Arguments = "--version",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                },
+                FileName = binaryPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
             };
+            startInfo.ArgumentList.Add("--version");
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                startInfo.ArgumentList.Add("--no-startup-window");
+            using var proc = new Process { StartInfo = startInfo };
             proc.Start();
             // Read both pipes asynchronously so a full pipe buffer can't deadlock
             // the parent, and so WaitForExit's timeout is the real wall-clock bound.

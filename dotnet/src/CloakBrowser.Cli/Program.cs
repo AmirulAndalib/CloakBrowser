@@ -159,7 +159,9 @@ static void PrintDiagnostics(Dictionary<string, object?> diag)
     }
     else if (launch["ok"] is true)
     {
-        Console.WriteLine($"Launch:    ✓ {launch["version"]}");
+        // Windows prints nothing, so say it ran rather than show an empty version.
+        var launched = launch["version"] as string;
+        Console.WriteLine($"Launch:    ✓ {(string.IsNullOrEmpty(launched) ? "runs (no version reported on Windows)" : launched)}");
     }
     else
     {

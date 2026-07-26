@@ -8,6 +8,8 @@ Changes are tagged: **[wrapper]** for Python/JS wrapper, **[binary]** for Chromi
 
 ## [Unreleased]
 
+- **[wrapper]** **`cloakbrowser info` no longer reports a false launch failure on Windows.** Chromium handles `--version` only on POSIX, so on Windows the switch was ignored and a browser started instead of printing — the probe then timed out and a healthy install was reported as broken, briefly putting a window on screen each run. The check now exits immediately on Windows, without a window, and still fails loudly on a genuinely broken binary; it reports no version there, since nothing is printed. Linux and macOS are unchanged. Python, JavaScript, and .NET.
+
 ## [0.5.2] — 2026-07-25
 
 - **[wrapper]** **Preview release channel.** Opt in with `release_channel="preview"` (`releaseChannel` in JavaScript, `ReleaseChannel` in .NET) or `CLOAKBROWSER_RELEASE_CHANNEL=preview` for every launch and CLI command. Preview means the newest build available for the current platform: a newer Preview is selected when present, otherwise it resolves to Stable, including when Stable has moved ahead. It is a standing setting, not a version pin, so a platform with no Preview build simply tracks Stable until one exists. CLI diagnostics report the requested and resolved channel plus the exact version that will launch. Python, JavaScript, and .NET.

@@ -49,10 +49,21 @@ def _module_available(module: str) -> bool:
 
 
 def _binary_version(binary_path: str) -> tuple[bool, str, str]:
-    """Launch `<binary> --version` to prove it runs. Returns (ok, version, err)."""
+    """Launch `<binary> --version` to prove it runs. Returns (ok, version, err).
+
+    Chromium only handles --version on POSIX, so on Windows the switch is ignored
+    and a browser starts instead of printing — the probe then times out and a
+    healthy install looks broken. --no-startup-window makes it exit right away
+    without putting a window on screen; a broken binary still exits non-zero, so
+    the check keeps its meaning. It just reports no version there, as nothing is
+    printed.
+    """
+    argv = [binary_path, "--version"]
+    if platform.system() == "Windows":
+        argv.append("--no-startup-window")
     try:
         result = subprocess.run(
-            [binary_path, "--version"],
+            argv,
             capture_output=True,
             text=True,
             timeout=10,
@@ -358,7 +369,8 @@ def _print_diagnostics(diag: dict) -> None:
     if not launch.get("tested"):
         print(f"Launch:    {launch['reason']}")
     elif launch["ok"]:
-        print(f"Launch:    ✓ {launch['version']}")
+        # Windows prints nothing, so say it ran rather than show an empty version.
+        print(f"Launch:    ✓ {launch['version'] or 'runs (no version reported on Windows)'}")
     else:
         print(f"Launch:    ✗ failed — {launch['error']}")
         for lib in launch.get("missing_libs", []):

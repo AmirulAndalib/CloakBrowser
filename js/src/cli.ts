@@ -64,10 +64,21 @@ function moduleAvailable(name: string): boolean {
   }
 }
 
-/** Launch `<binary> --version` to prove it runs. */
+/**
+ * Launch `<binary> --version` to prove it runs.
+ *
+ * Chromium only handles --version on POSIX, so on Windows the switch is ignored
+ * and a browser starts instead of printing — the probe then times out and a
+ * healthy install looks broken. --no-startup-window makes it exit right away
+ * without putting a window on screen; a broken binary still exits non-zero, so
+ * the check keeps its meaning. It just reports no version there, as nothing is
+ * printed.
+ */
 function binaryVersion(binaryPath: string): { ok: boolean; version: string; error: string } {
+  const argv = ["--version"];
+  if (os.platform() === "win32") argv.push("--no-startup-window");
   try {
-    const out = execFileSync(binaryPath, ["--version"], {
+    const out = execFileSync(binaryPath, argv, {
       encoding: "utf8",
       timeout: 10000,
       killSignal: "SIGKILL",
@@ -335,7 +346,8 @@ function printDiagnostics(diag: Record<string, any>): void {
   if (!launch.tested) {
     console.log(`Launch:    ${launch.reason}`);
   } else if (launch.ok) {
-    console.log(`Launch:    ✓ ${launch.version}`);
+    // Windows prints nothing, so say it ran rather than show an empty version.
+    console.log(`Launch:    ✓ ${launch.version || "runs (no version reported on Windows)"}`);
   } else {
     console.log(`Launch:    ✗ failed — ${launch.error}`);
     for (const lib of launch.missing_libs ?? []) {

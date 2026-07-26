@@ -8,6 +8,8 @@ Changes are tagged: **[wrapper]** for Python/JS wrapper, **[binary]** for Chromi
 
 ## [Unreleased]
 
+- **[wrapper]** **`humanize=True` no longer misses clicks on pages that are still loading.** When a page kept reflowing after the element was scrolled into view, the wrapper waited for the position to settle but never scrolled again — by then the element could have been pushed off screen, so the click was dispatched at coordinates outside the viewport and landed on nothing. The action reported success and the click had simply not happened. The element is now re-scrolled into view after the settle wait, and the pointer-events check no longer downgrades an already-confirmed miss to "undetermined" when a later probe times out, so a click that cannot land raises instead of passing silently. Measured on a page reflowing for 10–25 seconds: previously a silent miss after ~32s, now a successful click. Pages that reflow longer than the call's timeout still raise, as before. Python, JavaScript, and .NET.
+
 ---
 
 ## [0.5.4] — 2026-08-04

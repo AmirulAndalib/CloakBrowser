@@ -220,6 +220,30 @@ def test_binary_version_runs_stub(tmp_path):
     assert err == ""
 
 
+def test_console_glyph_falls_back_on_legacy_windows_encoding(monkeypatch):
+    """cmd.exe defaults to cp850/cp1252, which carry no check mark — printing one
+    there aborted the whole report with UnicodeEncodeError."""
+    import io
+
+    monkeypatch.setattr(
+        cloakbrowser.__main__.sys, "stdout", io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    )
+    assert cloakbrowser.__main__._console_glyph("✓", "OK") == "OK"
+    assert cloakbrowser.__main__._console_glyph("→", "->") == "->"
+    # cp1252 does carry the em dash, so it is kept — the check is per glyph.
+    assert cloakbrowser.__main__._console_glyph("—", "-") == "—"
+
+
+def test_console_glyph_kept_on_utf8(monkeypatch):
+    import io
+
+    monkeypatch.setattr(
+        cloakbrowser.__main__.sys, "stdout", io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    )
+    assert cloakbrowser.__main__._console_glyph("✓", "OK") == "✓"
+    assert cloakbrowser.__main__._console_glyph("✗", "x") == "✗"
+
+
 @pytestmark_posix
 def test_binary_version_windows_probe_does_not_hang(tmp_path, monkeypatch):
     """Real Windows Chrome ignores --version and starts a browser instead of

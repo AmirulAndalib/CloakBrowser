@@ -18,8 +18,32 @@ import platform
 import subprocess
 import sys
 
-UPGRADE_HINT = "For more than one concurrent session → https://cloakbrowser.dev"
-FREE_LATEST_HINT = "Get the latest binary free → run 'cloakbrowser login' or https://cloakbrowser.dev/free"
+
+def _console_glyph(glyph: str, fallback: str) -> str:
+    """Return an ASCII stand-in when the console can't encode `glyph`.
+
+    Windows consoles default to cp850/cp1252, which carry none of the marks
+    below — printing one there raises UnicodeEncodeError and aborts the report
+    partway through. UTF-8 consoles keep the glyph.
+    """
+    encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+    try:
+        glyph.encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return fallback
+    return glyph
+
+
+MARK_OK = _console_glyph("✓", "OK")
+MARK_FAIL = _console_glyph("✗", "x")
+ARROW = _console_glyph("→", "->")
+DASH = _console_glyph("—", "-")
+
+UPGRADE_HINT = f"For more than one concurrent session {ARROW} https://cloakbrowser.dev"
+FREE_LATEST_HINT = (
+    f"Get the latest binary free {ARROW} run 'cloakbrowser login' "
+    "or https://cloakbrowser.dev/free"
+)
 
 
 def _setup_logging() -> None:
@@ -326,7 +350,7 @@ def _print_diagnostics(diag: dict) -> None:
             requested_channel = binary.get("requested_channel", "stable")
             resolved_channel = binary.get("resolved_channel")
             if binary.get("channel_fallback"):
-                print("Channel:   Preview → Stable fallback")
+                print(f"Channel:   Preview {ARROW} Stable fallback")
             elif resolved_channel:
                 print(f"Channel:   {resolved_channel.capitalize()}")
             else:
@@ -335,14 +359,14 @@ def _print_diagnostics(diag: dict) -> None:
             if latest:
                 # Pro: show what launches now AND the server's latest, so the two
                 # can never silently diverge.
-                print(f"Version:   {binary['version']} ({binary['tier']}) — next launch")
+                print(f"Version:   {binary['version']} ({binary['tier']}) {DASH} next launch")
                 if latest == binary["version"] and binary.get("installed"):
                     print(f"Latest:    {latest} (up to date)")
                 elif latest == binary["version"]:
                     print(f"Latest:    {latest} (downloads on next launch)")
                 elif binary.get("pinned"):
                     print(
-                        f"Latest:    {latest} (available — pinned; unset "
+                        f"Latest:    {latest} (available {DASH} pinned; unset "
                         "CLOAKBROWSER_VERSION to upgrade)"
                     )
                 else:
@@ -354,7 +378,7 @@ def _print_diagnostics(diag: dict) -> None:
                 # Pro with no cached build and no server answer (e.g. offline).
                 print(
                     f"Version:   not downloaded yet ({binary['tier']}) "
-                    "— next launch downloads the latest"
+                    f"{DASH} next launch downloads the latest"
                 )
             else:
                 print(f"Version:   {binary['version']} ({binary['tier']})")
@@ -370,13 +394,13 @@ def _print_diagnostics(diag: dict) -> None:
         print(f"Launch:    {launch['reason']}")
     elif launch["ok"]:
         # Windows prints nothing, so say it ran rather than show an empty version.
-        print(f"Launch:    ✓ {launch['version'] or 'runs (no version reported on Windows)'}")
+        print(f"Launch:    {MARK_OK} {launch['version'] or 'runs (no version reported on Windows)'}")
     else:
-        print(f"Launch:    ✗ failed — {launch['error']}")
+        print(f"Launch:    {MARK_FAIL} failed {DASH} {launch['error']}")
         for lib in launch.get("missing_libs", []):
             print(f"           missing: {lib}")
         if launch.get("missing_libs"):
-            print("           → install the missing system libraries (e.g. apt-get install)")
+            print(f"           {ARROW} install the missing system libraries (e.g. apt-get install)")
 
     if "fonts" in diag:
         win = diag["fonts"]["windows"]
@@ -387,7 +411,7 @@ def _print_diagnostics(diag: dict) -> None:
             verdict = "ok" if n == total else "missing" if n == 0 else "partial"
             print(f"Win fonts: {verdict} ({n}/{total})")
             if n < total:
-                print("           → incomplete Windows font set; copy real Windows fonts (Segoe UI, Calibri, Consolas)")
+                print(f"           {ARROW} incomplete Windows font set; copy real Windows fonts (Segoe UI, Calibri, Consolas)")
         office = diag["fonts"].get("office")
         if office is not None:
             n, total = office

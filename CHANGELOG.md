@@ -8,6 +8,7 @@ Changes are tagged: **[wrapper]** for Python/JS wrapper, **[binary]** for Chromi
 
 ## [Unreleased]
 
+- **[wrapper]** **`cloakbrowser info` no longer aborts partway through on a Windows console.** `cmd.exe` defaults to a code page that cannot represent the report's check mark and arrow, so the command stopped with an encoding error at the first one and the remaining diagnostics were never printed. Those marks now degrade to plain text when the console cannot take them, per character. UTF-8 consoles, including Linux, macOS and Windows Terminal, are unchanged. Python.
 - **[wrapper]** **`cloakbrowser info` no longer reports a false launch failure on Windows.** Chromium handles `--version` only on POSIX, so on Windows the switch was ignored and a browser started instead of printing — the probe then timed out and a healthy install was reported as broken, briefly putting a window on screen each run. The check now exits immediately on Windows, without a window, and still fails loudly on a genuinely broken binary; it reports no version there, since nothing is printed. Linux and macOS are unchanged. Python, JavaScript, and .NET.
 
 ## [0.5.2] — 2026-07-25

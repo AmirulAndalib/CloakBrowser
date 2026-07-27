@@ -723,7 +723,6 @@ Supported by the binary but **not set by default** — pass via `args` to custom
 | `--fingerprint-brand` | Browser brand: `Chrome`, `Edge`, `Opera`, `Vivaldi` |
 | `--fingerprint-brand-version` | Brand version (UA + Client Hints) |
 | `--fingerprint-platform-version` | Client Hints platform version |
-| `--fingerprint-location` | Geolocation coordinates |
 | `--fingerprint-timezone` | Timezone (e.g. `America/New_York`) |
 | `--fingerprint-locale` | Locale (e.g. `en-US`) |
 | `--fingerprint-storage-quota` | Override storage quota in MB — affects `storage.estimate()`, `storageBuckets`, and legacy webkit APIs. Auto-normalized when `--fingerprint` is set |

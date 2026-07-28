@@ -286,7 +286,12 @@ async function resolveExitIp(proxyUrl: string | null | undefined, timeoutMs?: nu
             const innerRemaining = remainingMs(deadline);
             const req = https.request(
               echoUrl,
-              { socket, timeout: Math.min(5_000, innerRemaining ?? 5_000) } as any,
+              // agent:false is load-bearing. The global agent pools by target
+              // (api.ipify.org:443), which is identical for every proxy, so it
+              // reuses an earlier proxy's pooled socket and silently discards
+              // the tunnel just built here — a second launch in the same process
+              // would inherit the first proxy's exit IP, timezone and locale.
+              { socket, agent: false, timeout: Math.min(5_000, innerRemaining ?? 5_000) } as any,
               (res) => {
                 let data = "";
                 res.on("data", (chunk: Buffer) => (data += chunk.toString()));

@@ -6,7 +6,7 @@
  * and Pro version checks.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -91,6 +91,207 @@ export function licenseErrorFrom(err: unknown): CloakBrowserLicenseError | null 
   return msg !== null ? new CloakBrowserLicenseError(msg, { cause: err }) : null;
 }
 
+// Env var the wrapper uses to tell the Pro binary where to record a license
+// denial. A denial that resolves AFTER the CDP handshake (e.g. an over-cap seat)
+// kills the browser once the driver already holds a live connection, so the exit
+// code never reaches the wrapper as a launch failure. The binary writes the code
+// to this path just before exiting; the wrapper reads it when the user's next
+// call fails. Old binaries ignore the unknown var and never write.
+export const LICENSE_STATUS_FILE_ENV = "CLOAKBROWSER_LICENSE_STATUS_FILE";
+
+/**
+ * Map a raw license exit code (76-79) to a CloakBrowserLicenseError, or null
+ * for any code that is not a known license denial (so a genuine crash is never
+ * mislabelled). Companion to licenseErrorMessage for the post-handshake,
+ * file-based path where we hold the integer directly.
+ */
+export function licenseErrorForCode(code: number): CloakBrowserLicenseError | null {
+  const msg = LICENSE_EXIT_MESSAGES[code];
+  return msg ? new CloakBrowserLicenseError(msg) : null;
+}
+
+// Once a denial has been observed for a per-launch path, remember it. The read
+// is destructive, so a concurrent second guarded call for the same launch would
+// otherwise find the file gone and miss the denial. Paths are unique per launch.
+const observedDenials = new Map<string, number>();
+
+/**
+ * Read and consume a denial file written by the binary, returning its code.
+ * The file holds a single JSON integer (the exit code). Reading is destructive:
+ * the file is unlinked afterwards so a later launch can't see a stale code, but
+ * the observed code is cached in-process so a concurrent second guarded call
+ * still surfaces the denial. Any problem — absent, unreadable, or not a valid
+ * int — yields null.
+ */
+export function readDenialFile(filePath: string): number | null {
+  const cached = observedDenials.get(filePath);
+  if (cached !== undefined) return cached;
+  // Fast path: the guard calls this after *every* browser call to catch a
+  // denial that lands while calls still succeed, so the no-denial case (file
+  // absent) must be cheap — a single stat, not a read()+catch per call.
+  if (!fs.existsSync(filePath)) return null;
+  let code: number | null = null;
+  try {
+    const raw = fs.readFileSync(filePath, "utf-8");
+    const parsed = Number(JSON.parse(raw));
+    code = Number.isInteger(parsed) ? parsed : null;
+  } catch {
+    code = null;
+  }
+  try {
+    fs.unlinkSync(filePath);
+  } catch {
+    // best-effort cleanup
+  }
+  if (code !== null) observedDenials.set(filePath, code);
+  return code;
+}
+
+/**
+ * Return a fresh, unique path for the binary to write a denial code to. Only
+ * computes the path (and ensures the parent dir exists) — the file is created
+ * by the binary, and only on a denial, so a granted launch leaves nothing
+ * behind. Returns undefined if the directory can't be created; the caller then
+ * skips the feature (the fix must never break a launch).
+ */
+// A denial file is orphaned when the binary writes one but the user never calls
+// a guarded method afterwards. It is only consumed on a guarded call, so sweep
+// leftovers older than this at mint time — long enough that a live in-flight
+// denial from a concurrent launch is never deleted before its owner reads it.
+const DENIAL_FILE_TTL_MS = 3600_000;
+
+function sweepStaleDenials(denialDir: string): void {
+  try {
+    const now = Date.now();
+    for (const name of fs.readdirSync(denialDir)) {
+      if (!name.endsWith(".json")) continue;
+      const p = path.join(denialDir, name);
+      try {
+        if (now - fs.statSync(p).mtimeMs > DENIAL_FILE_TTL_MS) fs.unlinkSync(p);
+      } catch {
+        // best-effort
+      }
+    }
+  } catch {
+    // best-effort
+  }
+}
+
+export function mintDenialFile(): string | undefined {
+  try {
+    const denialDir = path.join(os.homedir(), ".cloakbrowser", "denials");
+    fs.mkdirSync(denialDir, { recursive: true });
+    sweepStaleDenials(denialDir);
+    return path.join(denialDir, `${randomUUID()}.json`);
+  } catch {
+    return undefined;
+  }
+}
+
+// Factory methods whose return value is itself a handle the user drives (a page
+// or context handed back after launch). Guarding these *deeply* — guarding the
+// object they return — lets a denial that lands AFTER the handshake surface on
+// the returned page's first call, not only on a second newPage(). Covers both
+// the Playwright and Puppeteer surfaces.
+const GUARD_FACTORY_METHODS = [
+  "newPage",
+  "newContext",
+  "createBrowserContext",
+  "createIncognitoBrowserContext",
+];
+
+// Never wrap these. `close` already carries teardown logic; the EventEmitter
+// surface is called INTERNALLY by playwright/puppeteer (e.g. emit('close')
+// during teardown), so throwing a license error from inside their own event
+// dispatch would crash the driver rather than surface cleanly to the user.
+const GUARD_SKIP_METHODS = new Set([
+  "close",
+  "on", "off", "once", "emit", "addListener", "removeListener",
+  "removeAllListeners", "listeners", "rawListeners", "listenerCount",
+  "eventNames", "prependListener", "prependOnceListener",
+  "setMaxListeners", "getMaxListeners",
+]);
+
+/** Read the denial file and map it to a license error, or null. */
+function denialLicenseError(denialPath: string): CloakBrowserLicenseError | null {
+  const code = readDenialFile(denialPath);
+  return code !== null ? licenseErrorForCode(code) : null;
+}
+
+/**
+ * Public, non-getter method names on `target` and its prototype chain — the
+ * methods that can throw a TargetClosedError once the browser dies. Getters are
+ * skipped so they are never triggered here; this covers every real method
+ * without enumerating them by hand.
+ */
+function guardableMethodNames(target: any): string[] {
+  const names = new Set<string>();
+  for (let obj = target; obj && obj !== Object.prototype; obj = Object.getPrototypeOf(obj)) {
+    for (const name of Object.getOwnPropertyNames(obj)) {
+      if (name === "constructor" || name.startsWith("_") || names.has(name)) continue;
+      if (GUARD_SKIP_METHODS.has(name)) continue;
+      const desc = Object.getOwnPropertyDescriptor(obj, name);
+      if (!desc || typeof desc.get === "function") continue; // skip getters
+      if (typeof target[name] === "function") names.add(name);
+    }
+  }
+  return [...names];
+}
+
+/**
+ * Guard every public method of `target` (a browser, context, or page) so a
+ * post-handshake license denial surfaces as CloakBrowserLicenseError on the
+ * user's first failing call — whichever method that is.
+ *
+ * A denial that lands after the driver connected kills the browser without a
+ * launch failure; the user's next call would otherwise throw a bare
+ * TargetClosedError. Each wrapped method checks the denial file the binary
+ * wrote — on error AND on success (the binary writes the file the instant it's
+ * over cap but keeps serving blank responses for ~1s before it exits, so a fast
+ * flow that never throws must still surface it). A genuine, non-license error
+ * propagates unchanged. Factory methods (newPage/newContext/…) additionally
+ * guard the object they return, so a page obtained after launch is covered too.
+ *
+ * Sync-ness is preserved: an async method's promise is chained, a sync method
+ * (`url()`, `isClosed()`, `on()`) returns its value directly — wrapping those in
+ * an async function would break them. Mirrors Python _install_license_guard.
+ */
+export function installLicenseGuard(target: any, denialPath: string): void {
+  for (const name of guardableMethodNames(target)) {
+    const original = target[name].bind(target);
+    const deep = GUARD_FACTORY_METHODS.includes(name);
+    target[name] = (...callArgs: any[]) => {
+      let result: any;
+      try {
+        result = original(...callArgs);
+      } catch (err) {
+        const lic = denialLicenseError(denialPath);
+        if (lic) throw lic;
+        throw err;
+      }
+      if (result != null && typeof result.then === "function") {
+        return result.then(
+          (val: any) => {
+            const lic = denialLicenseError(denialPath);
+            if (lic) throw lic;
+            if (deep && val != null) installLicenseGuard(val, denialPath);
+            return val;
+          },
+          (err: any) => {
+            const lic = denialLicenseError(denialPath);
+            if (lic) throw lic;
+            throw err;
+          },
+        );
+      }
+      const lic = denialLicenseError(denialPath);
+      if (lic) throw lic;
+      if (deep && result != null) installLicenseGuard(result, denialPath);
+      return result;
+    };
+  }
+}
+
 /**
  * Source of a resolved license key.  Determines whether env injection
  * into the child browser process is needed.
@@ -171,6 +372,7 @@ export function resolveLicenseKey(licenseKey?: string): string | undefined {
 export function buildLaunchEnv(
   licenseKey?: string,
   userEnv?: Record<string, string | undefined>,
+  statusFile?: string,
 ): Record<string, string> | undefined {
   const { key, source } = resolveLicenseKeyWithSource(licenseKey);
 
@@ -182,6 +384,31 @@ export function buildLaunchEnv(
       ) as Record<string, string>)
     : undefined;
 
+  let result = buildKeyEnv(key, source, baseEnv);
+
+  // Add the denial-status file path last so it rides along even on the
+  // inherit-parent-env (undefined) paths, which then have to become a full
+  // process.env copy (Playwright replaces, not merges). Only set when the
+  // caller asked for it, which it only does when a license key is in play.
+  if (statusFile !== undefined) {
+    if (result === undefined) {
+      result = {};
+      for (const [k, v] of Object.entries(process.env)) {
+        if (v !== undefined) result[k] = v;
+      }
+    }
+    result[LICENSE_STATUS_FILE_ENV] = statusFile;
+  }
+
+  return result;
+}
+
+/** The license-key half of buildLaunchEnv (unchanged behavior). */
+function buildKeyEnv(
+  key: string | undefined,
+  source: LicenseKeySource,
+  baseEnv: Record<string, string> | undefined,
+): Record<string, string> | undefined {
   // Default file: binary reads it directly — no env injection needed,
   // UNLESS the caller passes a custom env. Playwright replaces (not merges)
   // the child env, which can drop HOME and hide the file from the binary,

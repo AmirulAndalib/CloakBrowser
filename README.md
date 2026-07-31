@@ -727,7 +727,6 @@ Supported by the binary but **not set by default** — pass via `args` to custom
 | `--fingerprint-locale` | Locale (e.g. `en-US`) |
 | `--fingerprint-storage-quota` | Override storage quota in MB — affects `storage.estimate()`, `storageBuckets`, and legacy webkit APIs. Auto-normalized when `--fingerprint` is set |
 | `--fingerprint-taskbar-height` | Override taskbar height (binary defaults: Win=48, Mac=95, Linux=0) |
-| `--fingerprint-fonts-dir` | Path to directory containing target-platform fonts (see [Font Setup on Linux](#font-setup-on-linux)) |
 | `--fingerprint-windows-font-metrics` | **Chromium 148+ binary only** (no-op on earlier builds). Align font metrics with the Windows platform when spoofing Windows on Linux — used in the [FingerprintJS config](#detected-by-fingerprintjs). Requires Windows fonts installed (see [Font Setup on Linux](#font-setup-on-linux)); no effect without them |
 | `--fingerprint-webrtc-ip` | WebRTC ICE candidate IP replacement. Use `auto` to resolve from proxy exit IP (makes an HTTP call through the proxy), or pass an explicit IP. Auto-injected when `geoip=True` |
 | `--fingerprint-noise=false` | Disable noise injection (canvas, WebGL, audio, client rects) while keeping the deterministic fingerprint seed active |
@@ -761,12 +760,6 @@ mkdir -p ~/.local/share/fonts/windows
 cp /path/to/windows/fonts/*.ttf ~/.local/share/fonts/windows/
 cp /path/to/windows/fonts/*.TTF ~/.local/share/fonts/windows/
 fc-cache -f  # mandatory for manually copied fonts
-```
-
-```python
-browser = launch(
-    args=["--fingerprint-fonts-dir=/home/user/.local/share/fonts/windows"],
-)
 ```
 
 Confirm they registered with `fc-list | grep -i "segoe\|calibri\|consolas"`. Once all are present the warning stops on its own; set `CLOAKBROWSER_SUPPRESS_FONT_WARNING=1` to silence it if you accept the tradeoff.

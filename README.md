@@ -741,7 +741,9 @@ Supported by the binary but **not set by default** — pass via `args` to custom
 
 ### Font Setup on Linux
 
-**Required for aggressive anti-bot sites (Kasada, Akamai).** These systems render emoji on a hidden canvas and hash the pixel output. Minimal Linux environments (Docker, cloud VMs) often lack emoji and extended fonts, producing hashes that don't match any real browser. Install standard font packages to fix this:
+On Linux, CloakBrowser spoofs the **Windows** platform by default. Two font layers matter, and most setups only do the first:
+
+**1. Baseline (minimal) — emoji + CJK canvas fonts.** Aggressive anti-bot systems (Kasada, Akamai) render emoji on a hidden canvas and hash the pixel output. Minimal Linux environments (Docker, cloud VMs) lack these, producing hashes that don't match any real browser. This is the floor, not the finish line:
 
 ```bash
 sudo apt install -y fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont \
@@ -750,7 +752,9 @@ sudo apt install -y fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont \
 
 The Docker image (`cloakhq/cloakbrowser`) ships with these pre-installed. If you run the binary directly on a Linux server or in a custom Docker image, install them manually.
 
-**Optional: Windows fonts for CreepJS font enumeration.** The packages above fix anti-bot canvas checks but won't improve your CreepJS font score. For that, you need actual Windows fonts (Segoe UI, Calibri, Bahnschrift, etc.) from a Windows machine's `C:\Windows\Fonts\` directory — `ttf-mscorefonts-installer` only has old XP-era fonts and isn't enough.
+**2. Real Windows fonts — strongly recommended (required for `--fingerprint-windows-font-metrics`).** Since the Linux default persona is Windows, a Windows browser with no Windows fonts is itself a bot tell: font-fingerprinting anti-bot (FingerprintJS) flags the mismatch, and CreepJS font enumeration scores poorly. The apt packages above do **not** provide these — they are Microsoft-proprietary and cannot be installed from a package repo, and `ttf-mscorefonts-installer` only has old XP-era fonts (not enough).
+
+Copy the fonts from a real Windows machine's `C:\Windows\Fonts\` directory. The wrapper keeps warning until it finds all of: **Segoe UI, Segoe UI Light, Calibri, Marlett, MS UI Gothic, Franklin Gothic, Consolas, Courier New** (copying the whole `Fonts` folder covers these and more):
 
 ```bash
 mkdir -p ~/.local/share/fonts/windows
@@ -764,6 +768,8 @@ browser = launch(
     args=["--fingerprint-fonts-dir=/home/user/.local/share/fonts/windows"],
 )
 ```
+
+Confirm they registered with `fc-list | grep -i "segoe\|calibri\|consolas"`. Once all are present the warning stops on its own; set `CLOAKBROWSER_SUPPRESS_FONT_WARNING=1` to silence it if you accept the tradeoff.
 
 ### Examples
 

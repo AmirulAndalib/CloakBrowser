@@ -8,6 +8,10 @@ Changes are tagged: **[wrapper]** for Python/JS wrapper, **[binary]** for Chromi
 
 ## [Unreleased]
 
+---
+
+## [0.5.4] — 2026-08-04
+
 - **[wrapper]** A concurrent-session limit that is reached *after* the browser has already connected now surfaces as a clear `CloakBrowserLicenseError` on your first page action, instead of a generic "target closed" error (#477). It covers the persistent-context flow, where the first page is already open, as well as pages created from your own browser contexts. Python, JavaScript (Playwright + Puppeteer), and .NET.
 
 ---

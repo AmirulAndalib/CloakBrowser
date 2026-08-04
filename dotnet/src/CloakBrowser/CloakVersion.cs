@@ -4,5 +4,5 @@ namespace CloakBrowser;
 public static class CloakVersion
 {
     /// <summary>The CloakBrowser .NET wrapper version.</summary>
-    public const string Version = "0.5.3";
+    public const string Version = "0.5.4";
 }

@@ -757,9 +757,8 @@ Copy the fonts from a real Windows machine's `C:\Windows\Fonts\` directory. The 
 
 ```bash
 mkdir -p ~/.local/share/fonts/windows
-cp /path/to/windows/fonts/*.ttf ~/.local/share/fonts/windows/
-cp /path/to/windows/fonts/*.TTF ~/.local/share/fonts/windows/
-fc-cache -f  # mandatory for manually copied fonts
+cp -r /path/to/windows/Fonts/. ~/.local/share/fonts/windows/
+fc-cache -f
 ```
 
 Confirm they registered with `fc-list | grep -i "segoe\|calibri\|consolas"`. Once all are present the warning stops on its own; set `CLOAKBROWSER_SUPPRESS_FONT_WARNING=1` to silence it if you accept the tradeoff.

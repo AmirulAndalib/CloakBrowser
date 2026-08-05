@@ -8,7 +8,12 @@ Changes are tagged: **[wrapper]** for Python/JS wrapper, **[binary]** for Chromi
 
 ## [Unreleased]
 
+---
+
+## [0.5.5] — 2026-08-05
+
 - **[wrapper]** **`cloakbrowser info --proxy <url>` now resolves the exit IP, timezone, and locale a launch would apply through that proxy.** Previously `info` only reported whether the GeoIP database file was present; it never resolved anything, so there was no way to confirm a proxy hands you a timezone and locale that match its exit IP before launching. Passing `--proxy` runs the same resolution `geoip=True` uses at launch (downloading the GeoIP database if it is not cached) and prints the exit IP, timezone, and locale, in text and `--json` output. Plain `info` is unchanged and still makes no network call; it now points at the new flag. Python, JavaScript, and .NET.
+- **[wrapper]** **`humanize=True` no longer raises `TypeError` on Python 3.14 with a license key set.** Python 3.14 made `functools.partial` a method descriptor. The license guard stored each wrapped page method as a `partial`, relying on it *not* being a descriptor so that humanize could copy the methods onto a holder object and read them back unchanged. Under 3.14 the `partial` re-bound on access and injected a spurious first argument, so the first humanized page call raised `TypeError` (#488). The guard now wraps methods in a non-descriptor callable, inert wherever it is stored, on every Python version. Python only; JavaScript and .NET were unaffected.
 - **[wrapper]** **`humanize=True` no longer misses clicks on pages that are still loading.** When a page kept reflowing after the element was scrolled into view, the wrapper waited for the position to settle but never scrolled again — by then the element could have been pushed off screen, so the click was dispatched at coordinates outside the viewport and landed on nothing. The action reported success and the click had simply not happened. The element is now re-scrolled into view after the settle wait, and the pointer-events check no longer downgrades an already-confirmed miss to "undetermined" when a later probe times out, so a click that cannot land raises instead of passing silently. Measured on a page reflowing for 10–25 seconds: previously a silent miss after ~32s, now a successful click. Pages that reflow longer than the call's timeout still raise, as before. Python, JavaScript, and .NET.
 
 ---

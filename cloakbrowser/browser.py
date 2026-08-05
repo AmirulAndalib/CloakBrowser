@@ -14,7 +14,6 @@ Usage:
 
 from __future__ import annotations
 
-import functools
 import inspect
 import logging
 import os
@@ -70,6 +69,28 @@ _GUARD_FACTORY_METHODS = ("new_page", "new_context")
 _GUARD_SKIP_METHODS = frozenset({
     "close", "on", "once", "remove_listener",
 })
+
+
+class _Guarded:
+    """A non-descriptor callable that wraps the guard closure.
+
+    The guard is stored back on the target as a plain attribute, and humanize
+    copies it into a ``type("Originals", ...)()`` holder and reads it off that
+    *instance*. Anything with ``__get__`` (a bare function, or ``functools.partial``
+    on Python 3.14+, where partial became a method descriptor) would re-bind to the
+    holder and inject a spurious first positional arg. This class has no ``__get__``,
+    so it stays inert wherever it is stored — on any Python version. Works for both
+    the sync guard and the async guard: for the async case ``__call__`` returns the
+    coroutine the closure produces, which the caller awaits. (issue #488)
+    """
+
+    __slots__ = ("_fn",)
+
+    def __init__(self, fn: Any) -> None:
+        self._fn = fn
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self._fn(*args, **kwargs)
 
 
 def _denial_license_error(denial_path: str) -> CloakBrowserLicenseError | None:
@@ -139,12 +160,13 @@ def _install_license_guard(target: Any, denial_path: str) -> None:
                 return result
             return guarded
 
-        # Wrap in a partial so the guard is NOT a descriptor. Playwright's real
-        # methods are bound methods; humanize copies them into a class attribute
-        # (type("Originals", ...)) and reads them back off an instance. A plain
-        # function there would re-bind and inject a spurious ``self`` arg — a
-        # partial (like a bound method) does not. Keeps composition with humanize.
-        setattr(target, name, functools.partial(make(original, deep)))
+        # Wrap so the guard is NOT a descriptor. Playwright's real methods are
+        # bound methods; humanize copies them into a class attribute
+        # (type("Originals", ...)) and reads them back off an instance. A bare
+        # function — or a functools.partial on Python 3.14+, where partial became
+        # a method descriptor — would re-bind there and inject a spurious first
+        # positional arg. _Guarded has no __get__, so it stays inert. (issue #488)
+        setattr(target, name, _Guarded(make(original, deep)))
 
 
 def _install_license_guard_async(target: Any, denial_path: str) -> None:
@@ -177,8 +199,8 @@ def _install_license_guard_async(target: Any, denial_path: str) -> None:
                 return result
             return guarded
 
-        # Wrap in a partial so the guard is not a descriptor (see sync variant).
-        setattr(target, name, functools.partial(make(original, deep)))
+        # Wrap so the guard is not a descriptor (see sync variant, issue #488).
+        setattr(target, name, _Guarded(make(original, deep)))
 
 
 # Sentinel to distinguish "viewport not provided" from "viewport=None" (disable emulation)

@@ -484,7 +484,7 @@ python -m cloakbrowser clear-cache  # Remove cached binaries
 
 `login` with no argument prompts you to paste a license key or press Enter to get a free key via a GitHub sign-in; `login <key>` saves a key directly. Both validate the key, then store it at `~/.cloakbrowser/license.key` so every launch picks it up.
 
-`info` reports the binary that will actually launch given your license, runs a quick launch test (and flags missing system libraries on Linux), shows your license tier, and checks fonts, GeoIP, and optional dependencies. Add `--quick` to skip the launch test or `--json` for machine-readable output.
+`info` reports the binary that will actually launch given your license, runs a quick launch test (and flags missing system libraries on Linux), shows your license tier, and checks fonts, GeoIP, and optional dependencies. Add `--quick` to skip the launch test or `--json` for machine-readable output. Add `--proxy <url>` to resolve the exit IP, timezone, and locale a launch would apply through that proxy (the same `geoip=True` resolution; downloads the GeoIP DB if not cached) — useful for confirming a proxy hands you a timezone/locale that matches its exit IP.
 
 `CLOAKBROWSER_RELEASE_CHANNEL=preview` also applies to `install`, `info`, and `update`. `info` shows the exact version that will launch and whether Preview resolved to Stable for the current platform.
 

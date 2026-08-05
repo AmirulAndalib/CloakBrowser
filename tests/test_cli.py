@@ -55,6 +55,54 @@ def test_info_quick_skips_launch(capsys):
     assert "skipped (--quick)" in out
 
 
+def test_info_without_proxy_shows_hint_and_never_resolves(capsys):
+    with patch("cloakbrowser.geoip.resolve_proxy_geo_with_ip") as resolver:
+        _run(Namespace(quick=True, json=False))
+    resolver.assert_not_called()
+    out = capsys.readouterr().out
+    assert "pass --proxy" in out
+    assert "Exit IP:" not in out
+
+
+def test_info_proxy_resolves_and_prints_exit_ip(capsys):
+    with patch(
+        "cloakbrowser.geoip.resolve_proxy_geo_with_ip",
+        return_value=("Europe/Berlin", "de-DE", "203.0.113.9"),
+    ) as resolver:
+        _run(Namespace(quick=True, json=False, proxy="http://p:8080"))
+    resolver.assert_called_once_with("http://p:8080")
+    out = capsys.readouterr().out
+    assert "Exit IP:   203.0.113.9" in out
+    assert "Timezone:  Europe/Berlin" in out
+    assert "Locale:    de-DE" in out
+    assert "pass --proxy" not in out  # hint suppressed once resolved
+
+
+def test_info_proxy_json_includes_resolved(capsys):
+    with patch(
+        "cloakbrowser.geoip.resolve_proxy_geo_with_ip",
+        return_value=("Europe/Berlin", "de-DE", "203.0.113.9"),
+    ):
+        _run(Namespace(quick=True, json=True, proxy="http://p:8080"))
+    data = json.loads(capsys.readouterr().out)
+    assert data["geoip"]["resolved"] == {
+        "exit_ip": "203.0.113.9",
+        "timezone": "Europe/Berlin",
+        "locale": "de-DE",
+    }
+
+
+def test_info_proxy_resolution_failure_is_reported_not_fatal(capsys):
+    with patch(
+        "cloakbrowser.geoip.resolve_proxy_geo_with_ip",
+        side_effect=RuntimeError("proxy refused"),
+    ):
+        _run(Namespace(quick=True, json=False, proxy="http://p:8080"))
+    out = capsys.readouterr().out
+    assert "could not resolve" in out
+    assert "proxy refused" in out
+
+
 def test_keyless_reports_free_binary(capsys):
     """No license key -> the binary section reflects the FREE binary."""
     _run(Namespace(quick=True, json=True))

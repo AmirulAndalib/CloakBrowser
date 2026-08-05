@@ -57,6 +57,32 @@ public class DiagnosticsTests
     }
 
     [Fact]
+    public void No_proxy_never_resolves_geoip_and_stays_network_free()
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        Directory.CreateDirectory(tmp);
+        string? prevCache = Environment.GetEnvironmentVariable("CLOAKBROWSER_CACHE_DIR");
+        string? prevKey = Environment.GetEnvironmentVariable("CLOAKBROWSER_LICENSE_KEY");
+        try
+        {
+            Environment.SetEnvironmentVariable("CLOAKBROWSER_CACHE_DIR", tmp);
+            Environment.SetEnvironmentVariable("CLOAKBROWSER_LICENSE_KEY", null);
+
+            // Default `info` (no proxy) must not resolve — no exit-IP lookup, no
+            // GeoIP DB download. The "resolved" key is only added when a proxy is given.
+            var diag = Diagnostics.Collect(quick: true);
+            var geoip = Assert.IsType<Dictionary<string, object?>>(diag["geoip"]);
+            Assert.False(geoip.ContainsKey("resolved"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("CLOAKBROWSER_CACHE_DIR", prevCache);
+            Environment.SetEnvironmentVariable("CLOAKBROWSER_LICENSE_KEY", prevKey);
+            try { Directory.Delete(tmp, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
     public void Preview_reports_stable_fallback_and_next_launch_version()
     {
         var tmp = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());

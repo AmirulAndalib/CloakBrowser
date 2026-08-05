@@ -10,7 +10,7 @@ namespace CloakBrowser;
 /// </summary>
 internal static class Diagnostics
 {
-    internal static Dictionary<string, object?> Collect(bool quick)
+    internal static Dictionary<string, object?> Collect(bool quick, string? proxy = null)
     {
         var diag = new Dictionary<string, object?>();
 
@@ -94,7 +94,29 @@ internal static class Diagnostics
 
         // GeoIP DB — presence only, never downloads.
         string dbPath = Path.Combine(Config.GetCacheDir(), "geoip", "GeoLite2-City.mmdb");
-        diag["geoip"] = new Dictionary<string, object?> { ["db_present"] = File.Exists(dbPath), ["path"] = dbPath };
+        var geoip = new Dictionary<string, object?> { ["db_present"] = File.Exists(dbPath), ["path"] = dbPath };
+        diag["geoip"] = geoip;
+
+        // Live resolution — only when a proxy is explicitly given. Mirrors
+        // LaunchAsync: resolves the exit IP and, computing tz/locale, caches the
+        // DB if absent. Never crashes `info` — failures land in ["error"].
+        if (!string.IsNullOrEmpty(proxy))
+        {
+            try
+            {
+                var (tz, locale, exitIp) = GeoIp.ResolveProxyGeoWithIpAsync(proxy).GetAwaiter().GetResult();
+                geoip["resolved"] = new Dictionary<string, object?>
+                {
+                    ["exit_ip"] = exitIp,
+                    ["timezone"] = tz,
+                    ["locale"] = locale,
+                };
+            }
+            catch (Exception ex)
+            {
+                geoip["resolved"] = new Dictionary<string, object?> { ["error"] = ex.Message };
+            }
+        }
 
         // Dependency assemblies — mirrors the Python/JS modules section. These are
         // hard NuGet references, so "missing" here means a broken deployment.

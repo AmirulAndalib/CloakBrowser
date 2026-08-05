@@ -25,6 +25,7 @@ import {
   WRAPPER_VERSION,
 } from "./config.js";
 import { countFontsPresent, WINDOWS_FONT_TELLS, OFFICE_FONT_TELLS } from "./fonts.js";
+import { resolveProxyGeo } from "./geoip.js";
 import { resolveLicenseKey, validateLicense, getProLatestRelease, getActiveSessionCount, type LicenseInfo } from "./license.js";
 import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -209,7 +210,10 @@ async function effectiveBinary(
   };
 }
 
-export async function collectDiagnostics(quick: boolean): Promise<Record<string, unknown>> {
+export async function collectDiagnostics(
+  quick: boolean,
+  proxy?: string
+): Promise<Record<string, unknown>> {
   const diag: Record<string, any> = {};
 
   diag.environment = {
@@ -276,6 +280,17 @@ export async function collectDiagnostics(quick: boolean): Promise<Record<string,
   // GeoIP DB — presence only, never downloads.
   const dbPath = path.join(getCacheDir(), "geoip", "GeoLite2-City.mmdb");
   diag.geoip = { db_present: fs.existsSync(dbPath), path: dbPath };
+
+  // Live resolution — only when a proxy is explicitly given. Mirrors launch():
+  // resolves the exit IP and, computing tz/locale, caches the DB if absent.
+  if (proxy) {
+    try {
+      const { timezone, locale, exitIp } = await resolveProxyGeo(proxy);
+      diag.geoip.resolved = { exit_ip: exitIp, timezone, locale };
+    } catch (err) {
+      diag.geoip.resolved = { error: (err as Error).message };
+    }
+  }
 
   // Optional peer deps.
   diag.modules = {
@@ -405,7 +420,21 @@ function printDiagnostics(diag: Record<string, any>): void {
     );
   }
 
-  console.log(`GeoIP DB:  ${diag.geoip.db_present ? "present" : "not downloaded (optional)"}`);
+  const resolved = diag.geoip.resolved;
+  let dbLine = diag.geoip.db_present ? "present" : "not downloaded (optional)";
+  if (resolved === undefined) {
+    dbLine += "  (pass --proxy <url> to resolve exit IP + timezone/locale)";
+  }
+  console.log(`GeoIP DB:  ${dbLine}`);
+  if (resolved !== undefined) {
+    if (resolved.error) {
+      console.log(`Exit IP:   (could not resolve — ${resolved.error})`);
+    } else {
+      console.log(`Exit IP:   ${resolved.exit_ip ?? "(unknown)"}`);
+      console.log(`Timezone:  ${resolved.timezone ?? "(unknown)"}`);
+      console.log(`Locale:    ${resolved.locale ?? "(unknown)"}`);
+    }
+  }
 
   console.log("Modules:");
   for (const [label, available] of Object.entries(diag.modules)) {
@@ -413,10 +442,19 @@ function printDiagnostics(diag: Record<string, any>): void {
   }
 }
 
+function getFlagValue(args: string[], flag: string): string | undefined {
+  const eq = args.find((a) => a.startsWith(`${flag}=`));
+  if (eq) return eq.slice(flag.length + 1);
+  const i = args.indexOf(flag);
+  if (i !== -1 && i + 1 < args.length) return args[i + 1];
+  return undefined;
+}
+
 async function cmdInfo(args: string[]): Promise<void> {
   const quick = args.includes("--quick") || args.includes("--no-launch");
   const asJson = args.includes("--json");
-  const diag = await collectDiagnostics(quick);
+  const proxy = getFlagValue(args, "--proxy");
+  const diag = await collectDiagnostics(quick, proxy);
   if (asJson) {
     console.log(JSON.stringify(diag, null, 2));
   } else {

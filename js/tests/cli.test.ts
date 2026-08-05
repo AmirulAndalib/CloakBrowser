@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import * as license from "../src/license.js";
+import * as geoip from "../src/geoip.js";
 
 // collectDiagnostics reads the cache dir (license key file, binary path) and,
 // in --quick mode, never spawns the binary — so an isolated temp cache dir is
@@ -74,5 +75,36 @@ describe("collectDiagnostics", () => {
     else expect(diag.fonts).toBeUndefined();
     expect(typeof diag.geoip.db_present).toBe("boolean");
     expect(Object.keys(diag.modules).length).toBeGreaterThan(0);
+  });
+
+  it("does not resolve geoip when no proxy is given", async () => {
+    const spy = vi.spyOn(geoip, "resolveProxyGeo");
+    const { collectDiagnostics } = await import("../src/cli.js");
+    const diag = (await collectDiagnostics(true)) as Record<string, any>;
+    expect(spy).not.toHaveBeenCalled();
+    expect(diag.geoip.resolved).toBeUndefined();
+  });
+
+  it("resolves exit IP + timezone + locale when a proxy is given", async () => {
+    const spy = vi.spyOn(geoip, "resolveProxyGeo").mockResolvedValue({
+      timezone: "Europe/Berlin",
+      locale: "de-DE",
+      exitIp: "203.0.113.9",
+    });
+    const { collectDiagnostics } = await import("../src/cli.js");
+    const diag = (await collectDiagnostics(true, "http://p:8080")) as Record<string, any>;
+    expect(spy).toHaveBeenCalledWith("http://p:8080");
+    expect(diag.geoip.resolved).toEqual({
+      exit_ip: "203.0.113.9",
+      timezone: "Europe/Berlin",
+      locale: "de-DE",
+    });
+  });
+
+  it("reports a resolution failure without throwing", async () => {
+    vi.spyOn(geoip, "resolveProxyGeo").mockRejectedValue(new Error("proxy refused"));
+    const { collectDiagnostics } = await import("../src/cli.js");
+    const diag = (await collectDiagnostics(true, "http://p:8080")) as Record<string, any>;
+    expect(diag.geoip.resolved.error).toContain("proxy refused");
   });
 });

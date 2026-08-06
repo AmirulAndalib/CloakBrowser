@@ -55,6 +55,10 @@ public sealed partial class HumanizedPage : IPage
     public IMouse Mouse => _mouse;
     public IKeyboard Keyboard => _keyboard;
 
+    // Re-wrap the owning context so pages/CDP sessions obtained via page.Context stay
+    // humanized (the generator would otherwise forward the raw Playwright context).
+    public IBrowserContext Context => Humanize.Context(_inner.Context, _cfg);
+
     // -----------------------------------------------------------------------
     // Humanized selector actions
     // -----------------------------------------------------------------------

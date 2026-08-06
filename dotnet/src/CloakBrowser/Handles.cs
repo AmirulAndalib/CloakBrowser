@@ -169,6 +169,7 @@ internal static class LicenseGuard
     public static object Wrap(object target, string? denialPath)
     {
         if (denialPath == null) return target;
+        if (target is IGuardedProxy) return target; // already guarded — don't nest proxies
         return target switch
         {
             IPage p => WrapAs<IPage>(p, denialPath),
@@ -176,6 +177,30 @@ internal static class LicenseGuard
             IBrowser b => WrapAs<IBrowser>(b, denialPath),
             _ => target,
         };
+    }
+
+    /// <summary>
+    /// Peel every CloakBrowser wrapper — the license-guard <see cref="DispatchProxy"/> first,
+    /// then the humanize decorator — off a page/frame/element handle to recover the raw
+    /// Playwright object. A few Playwright methods (notably
+    /// <see cref="IBrowserContext.NewCDPSessionAsync(IPage)"/>) internally down-cast the
+    /// handle they are given to Playwright's concrete type, which throws on any wrapper; those
+    /// must receive the unwrapped handle. Non-wrapped objects are returned unchanged.
+    /// </summary>
+    public static object Unwrap(object handle)
+    {
+        var current = handle;
+        while (true)
+        {
+            switch (current)
+            {
+                case IGuardedProxy g: current = g.GuardTarget; break;
+                case HumanizedPage p: current = p.Original; break;
+                case HumanizedFrame f: current = f.Original; break;
+                case HumanizedElementHandle e: current = e.Original; break;
+                default: return current;
+            }
+        }
     }
 
     private static T WrapAs<T>(T target, string denialPath) where T : class
@@ -195,10 +220,18 @@ internal static class LicenseGuard
 /// getters + the EventEmitter surface). <c>get_Pages</c> is special-cased so a persistent
 /// context's already-open pages are guarded too.
 /// </summary>
-internal class LicenseGuardProxy<T> : DispatchProxy where T : class
+internal interface IGuardedProxy
+{
+    /// <summary>The object this proxy forwards to (see <see cref="LicenseGuard.Unwrap"/>).</summary>
+    object GuardTarget { get; }
+}
+
+internal class LicenseGuardProxy<T> : DispatchProxy, IGuardedProxy where T : class
 {
     private T _target = null!;
     private string _denialPath = null!;
+
+    object IGuardedProxy.GuardTarget => _target;
 
     internal void Init(T target, string denialPath)
     {
@@ -216,6 +249,10 @@ internal class LicenseGuardProxy<T> : DispatchProxy where T : class
             // Guard the pages a persistent context hands back (context.Pages[0]).
             if (targetMethod.Name == "get_Pages" && value is IReadOnlyList<IPage> pages)
                 return pages.Select(p => (IPage)LicenseGuard.Wrap(p, _denialPath)).ToList();
+            // Guard the context a page hands back (page.Context) so calls made through it —
+            // notably NewCDPSessionAsync, which unwraps its page/frame argument — stay guarded.
+            if (targetMethod.Name == "get_Context" && value is IBrowserContext ctx)
+                return LicenseGuard.Wrap(ctx, _denialPath);
             return value;
         }
 
@@ -250,12 +287,34 @@ internal class LicenseGuardProxy<T> : DispatchProxy where T : class
     /// caller sees the genuine Playwright exception.</summary>
     private object? Forward(MethodInfo method, object?[]? args)
     {
-        try { return method.Invoke(_target, args); }
+        try { return method.Invoke(_target, UnwrapArgs(args)); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
             throw; // unreachable
         }
+    }
+
+    /// <summary>
+    /// Unwrap any page/frame/element-handle arguments back to their raw Playwright objects
+    /// before the real method runs. Playwright methods that take a handle (e.g.
+    /// NewCDPSessionAsync) down-cast it to a concrete type and throw on a wrapper. Returns the
+    /// original array untouched when nothing needs unwrapping (the common case).
+    /// </summary>
+    private static object?[]? UnwrapArgs(object?[]? args)
+    {
+        if (args == null) return null;
+        object?[]? copy = null;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] is IPage or IFrame or IElementHandle)
+            {
+                var unwrapped = LicenseGuard.Unwrap(args[i]!);
+                if (!ReferenceEquals(unwrapped, args[i]))
+                    (copy ??= (object?[])args.Clone())[i] = unwrapped;
+            }
+        }
+        return copy ?? args;
     }
 
     private async Task GuardTask(MethodInfo method, object?[]? args)

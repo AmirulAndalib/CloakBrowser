@@ -1,3 +1,4 @@
+using CloakBrowser;
 using CloakBrowser.Human;
 using CloakBrowser.Wrappers;
 using Microsoft.Playwright;
@@ -169,5 +170,78 @@ public class BrowserContextWrapperTests
         var human = (HumanizedBrowser)Humanize.Browser(browser, new HumanConfig());
         Assert.Same(browser, human.Original);
         Assert.Same(browser, human.Inner);
+    }
+
+    // -----------------------------------------------------------------------
+    // NewCDPSessionAsync: the page/frame argument must reach Playwright unwrapped.
+    // Playwright down-casts it to its concrete Page/Frame (reads .Guid), which throws
+    // NullReferenceException on any wrapper. Regression for the .NET 0.5.4 report.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Unwrap_peels_guard_proxy_and_humanize_off_a_page()
+    {
+        var raw = MakeFakePage();
+        var humanized = await Humanize.PageAsync(raw, new HumanConfig());
+        var denialPath = License.MintDenialFile()!;
+        var guarded = (IPage)LicenseGuard.Wrap(humanized, denialPath);
+
+        Assert.NotSame(raw, guarded);
+        Assert.Same(raw, LicenseGuard.Unwrap(guarded)); // internal peeler
+        Assert.Same(raw, Humanize.Unwrap(guarded));     // public escape hatch
+    }
+
+    [Fact]
+    public async Task Guarded_context_forwards_unwrapped_page_to_NewCDPSession()
+    {
+        var raw = MakeFakePage();
+        var humanized = await Humanize.PageAsync(raw, new HumanConfig());
+        var denialPath = License.MintDenialFile()!;
+        var guardedPage = (IPage)LicenseGuard.Wrap(humanized, denialPath);
+
+        var (cdp, _) = Fake.Of<ICDPSession>();
+        var (ctx, ctxRec) = Fake.Of<IBrowserContext>();
+        ctxRec.On("NewCDPSessionAsync", _ => Task.FromResult(cdp));
+        var guardedCtx = (IBrowserContext)LicenseGuard.Wrap(ctx, denialPath);
+
+        await guardedCtx.NewCDPSessionAsync(guardedPage);
+
+        // The inner Playwright context must receive the RAW page, not a wrapper.
+        Assert.Same(raw, ctxRec.Last("NewCDPSessionAsync")!.Args[0]);
+    }
+
+    [Fact]
+    public async Task Humanized_context_unwraps_page_for_NewCDPSession()
+    {
+        var raw = MakeFakePage();
+        var humanized = await Humanize.PageAsync(raw, new HumanConfig());
+
+        var (cdp, _) = Fake.Of<ICDPSession>();
+        var (ctx, ctxRec) = Fake.Of<IBrowserContext>();
+        ctxRec.On("NewCDPSessionAsync", _ => Task.FromResult(cdp));
+        var humanCtx = Humanize.Context(ctx, new HumanConfig());
+
+        await humanCtx.NewCDPSessionAsync(humanized);
+
+        Assert.Same(raw, ctxRec.Last("NewCDPSessionAsync")!.Args[0]);
+    }
+
+    [Fact]
+    public async Task HumanizedPage_Context_stays_humanized()
+    {
+        var (mouse, _) = Fake.Of<IMouse>();
+        var (keyboard, _) = Fake.Of<IKeyboard>();
+        var (page, pageRec) = Fake.Of<IPage>();
+        pageRec.On("Mouse", mouse);
+        pageRec.On("Keyboard", keyboard);
+        pageRec.On("ViewportSize", new PageViewportSizeResult { Width = 800, Height = 600 });
+        var (rawCtx, _) = Fake.Of<IBrowserContext>();
+        pageRec.On("Context", rawCtx);
+
+        var humanized = await Humanize.PageAsync(page, new HumanConfig());
+
+        // page.Context must not leak the raw context (else page.Context.NewPageAsync()
+        // silently returns an un-humanized page).
+        Assert.IsType<HumanizedBrowserContext>(humanized.Context);
     }
 }

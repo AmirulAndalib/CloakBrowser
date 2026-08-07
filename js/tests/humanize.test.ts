@@ -446,6 +446,28 @@ describe("patchPage frame patching", () => {
     expect(originalPageClick).not.toHaveBeenCalled();
   });
 
+  it("main-frame click delegates to the humanized page.click (not the frame path)", async () => {
+    // Regression guard: page.locator(sel).click() reaches the MAIN frame's click,
+    // which must route to the humanized page.click (isolated-world pre-click reads),
+    // NOT the frame-scoped locator path that reads via Playwright and is detectable.
+    const { patchPage } = await import("../src/human/index.js");
+
+    const mainFrame = { ...buildMockFrame(), childFrames: vi.fn(() => []) };
+    const page = buildMockPage({ mainFrameReturn: mainFrame });
+    const cfg = resolveConfig("default", { mouse_min_steps: 1, mouse_max_steps: 1 });
+    const cursor = { x: 0, y: 0, initialized: true };
+    patchPage(page as any, cfg, cursor as any);
+
+    // Swap the humanized page.click for a spy, then drive the main frame's click.
+    const clickSpy = vi.fn(async () => {});
+    (page as any).click = clickSpy;
+    await (mainFrame as any).click("button.submit", { timeout: 1234 });
+
+    expect(clickSpy).toHaveBeenCalledWith("button.submit", { timeout: 1234 });
+    // must NOT fall through to the frame-scoped locator (the pre-fix leak path)
+    expect(mainFrame.locator).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["type", async (frame: any) => frame.type("input.email", "@")],
     ["fill", async (frame: any) => frame.fill("input.email", "@")],

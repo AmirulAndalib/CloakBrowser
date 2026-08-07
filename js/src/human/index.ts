@@ -710,6 +710,30 @@ function patchSingleFrame(
   originals: any,
   stealth: StealthEval,
 ): void {
+  // The main frame's Locator actions (page.locator(sel).click() etc.) delegate,
+  // in Playwright, to the main frame's own method. Route those to the already-
+  // patched page-level methods so they use the full humanized path with the
+  // isolated-world pre-click reads. Only true sub-frames use the frame-scoped
+  // path below (iterFrames() includes the main frame). Mirrors the Python
+  // wrapper, which intercepts at Locator.click and routes to page.click.
+  if (frame === page.mainFrame()) {
+    const p = page as any;
+    (frame as any).click = (selector: string, options?: HumanActionOptions) => p.click(selector, options);
+    (frame as any).dblclick = (selector: string, options?: HumanActionOptions) => p.dblclick(selector, options);
+    (frame as any).hover = (selector: string, options?: HumanActionOptions) => p.hover(selector, options);
+    (frame as any).type = (selector: string, text: string, options?: HumanActionOptions) => p.type(selector, text, options);
+    (frame as any).fill = (selector: string, value: string, options?: HumanActionOptions) => p.fill(selector, value, options);
+    (frame as any).check = (selector: string, options?: HumanActionOptions) => p.check(selector, options);
+    (frame as any).uncheck = (selector: string, options?: HumanActionOptions) => p.uncheck(selector, options);
+    (frame as any).selectOption = (selector: string, values: any, options?: HumanActionOptions) => p.selectOption(selector, values, options);
+    (frame as any).press = (selector: string, key: string, options?: HumanActionOptions) => p.press(selector, key, options);
+    (frame as any).pressSequentially = (selector: string, text: string, options?: HumanActionOptions) => p.pressSequentially(selector, text, options);
+    (frame as any).tap = (selector: string, options?: HumanActionOptions) => p.tap(selector, options);
+    (frame as any).clear = (selector: string, options?: HumanActionOptions) => p.clear(selector, options);
+    // dragAndDrop has no humanized page equivalent; left on the native path (still detectable, out of scope).
+    return;
+  }
+
   // Save originals for methods that need fallback
   const origFrameClick = frame.click.bind(frame);
   const origFrameDblclick = frame.dblclick.bind(frame);

@@ -63,6 +63,15 @@ internal sealed class HumanCursor
 
     public void InvalidateStealth() => _stealth?.Invalidate();
 
+    /// <summary>The isolated world for stealth DOM reads, initializing it on first use.
+    /// Returns null when the CDP session could not be created.</summary>
+    internal async Task<IsolatedWorld?> GetStealthAsync()
+    {
+        if (!_stealthInitialized)
+            await InitStealthAsync().ConfigureAwait(false);
+        return _stealth;
+    }
+
     public async Task EnsureInitializedAsync(HumanConfig cfg)
     {
         if (_initialized) return;

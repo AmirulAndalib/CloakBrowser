@@ -50,6 +50,7 @@ public sealed partial class HumanizedPage : IPage
     };
 
     private ILocator Wrap(ILocator l) => Humanize.WrapLocator(l, _cursor, _cfg);
+    private ILocator Wrap(ILocator l, string? selector) => Humanize.WrapLocator(l, _cursor, _cfg, selector);
     private IFrame Wrap(IFrame f) => Humanize.WrapFrame(f, _cursor, _cfg);
 
     private void AddFrameEventHandler(
@@ -177,7 +178,7 @@ public sealed partial class HumanizedPage : IPage
     // Locator-returning members - re-wrap.
     // -----------------------------------------------------------------------
 
-    public ILocator Locator(string selector, PageLocatorOptions? options = null) => Wrap(_inner.Locator(selector, options));
+    public ILocator Locator(string selector, PageLocatorOptions? options = null) => Wrap(_inner.Locator(selector, options), selector);
     public ILocator GetByAltText(string text, PageGetByAltTextOptions? options = null) => Wrap(_inner.GetByAltText(text, options));
     public ILocator GetByAltText(Regex text, PageGetByAltTextOptions? options = null) => Wrap(_inner.GetByAltText(text, options));
     public ILocator GetByLabel(string text, PageGetByLabelOptions? options = null) => Wrap(_inner.GetByLabel(text, options));

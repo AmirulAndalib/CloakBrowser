@@ -80,8 +80,8 @@ public static class Humanize
     // Internal re-wrap helpers (shared by the wrappers).
     // -----------------------------------------------------------------------
 
-    internal static ILocator WrapLocator(ILocator locator, HumanCursor cursor, HumanConfig cfg) =>
-        locator is HumanizedLocator ? locator : new HumanizedLocator(locator, cursor, cfg);
+    internal static ILocator WrapLocator(ILocator locator, HumanCursor cursor, HumanConfig cfg, string? selector = null) =>
+        locator is HumanizedLocator ? locator : new HumanizedLocator(locator, cursor, cfg, selector);
 
     internal static IFrame WrapFrame(IFrame frame, HumanCursor cursor, HumanConfig cfg) =>
         frame is HumanizedFrame ? frame : new HumanizedFrame(frame, cursor, cfg);

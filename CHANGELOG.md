@@ -10,6 +10,14 @@ Changes are tagged: **[wrapper]** for Python/JS wrapper, **[binary]** for Chromi
 
 ---
 
+## [0.5.6] — 2026-08-08
+
+- **[wrapper]** Fix `humanize=True` triggering invisible CAPTCHA challenges during clicks. Humanized pre-click checks are now stealth-safe without sacrificing actionability, smooth scrolling, accurate targeting, or common selector support. Python, JavaScript, and .NET.
+- **[wrapper]** Humanize frames created after page load instead of leaving dynamically attached frames with raw Playwright/Puppeteer behavior. Python, JavaScript, Puppeteer, and .NET.
+- **[wrapper]** Fix .NET `NewCDPSessionAsync()` throwing `NullReferenceException` when passed a wrapped page or frame. Adds `Humanize.Unwrap()` for APIs that require Playwright's concrete handles.
+
+---
+
 ## [0.5.5] — 2026-08-05
 
 - **[wrapper]** **`cloakbrowser info --proxy <url>` now resolves the exit IP, timezone, and locale a launch would apply through that proxy.** Previously `info` only reported whether the GeoIP database file was present; it never resolved anything, so there was no way to confirm a proxy hands you a timezone and locale that match its exit IP before launching. Passing `--proxy` runs the same resolution `geoip=True` uses at launch (downloading the GeoIP database if it is not cached) and prints the exit IP, timezone, and locale, in text and `--json` output. Plain `info` is unchanged and still makes no network call; it now points at the new flag. Python, JavaScript, and .NET.

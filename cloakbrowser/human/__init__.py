@@ -1707,6 +1707,18 @@ def _patch_frames_sync(
     page: Any, cfg: HumanConfig, cursor: _CursorState,
     raw_mouse: RawMouse, raw_keyboard: RawKeyboard, originals: Any,
 ) -> None:
+    def _on_frame_attached(frame: Any) -> None:
+        try:
+            _patch_single_frame_sync(frame, page, cfg, cursor, raw_mouse, raw_keyboard, originals)
+        except Exception:
+            logger.exception("Failed to humanize dynamically attached frame")
+
+    # Register before enumerating so frames attached during the initial scan
+    # cannot escape humanization. Playwright emits this for nested frames too.
+    if not getattr(page, "_human_frame_listener_attached", False):
+        page.on("frameattached", _on_frame_attached)
+        page._human_frame_listener_attached = True
+
     for frame in _iter_frames(page):
         _patch_single_frame_sync(frame, page, cfg, cursor, raw_mouse, raw_keyboard, originals)
 
@@ -1738,7 +1750,6 @@ def _patch_single_frame_sync(
 ) -> None:
     if getattr(frame, "_human_patched", False):
         return
-    frame._human_patched = True
 
     # Frame-scoped resolution: humanize via ``frame.locator(selector)`` so the
     # selector resolves in the sub-frame's own document, while the mouse stays
@@ -1940,6 +1951,7 @@ def _patch_single_frame_sync(
     _patch_frame_element_handles_sync(
         frame, page, cfg, cursor, raw_mouse, raw_keyboard, originals, stealth_world, cdp_session
     )
+    frame._human_patched = True
 
 
 def _patch_frame_element_handles_sync(
@@ -2770,6 +2782,18 @@ def _patch_frames_async(
     page: Any, cfg: HumanConfig, cursor: _CursorState,
     raw_mouse: AsyncRawMouse, raw_keyboard: AsyncRawKeyboard, originals: Any,
 ) -> None:
+    def _on_frame_attached(frame: Any) -> None:
+        try:
+            _patch_single_frame_async(frame, page, cfg, cursor, raw_mouse, raw_keyboard, originals)
+        except Exception:
+            logger.exception("Failed to humanize dynamically attached frame")
+
+    # Async Playwright events accept a regular callback; patching only replaces
+    # methods, so no task or await is needed here.
+    if not getattr(page, "_human_frame_listener_attached", False):
+        page.on("frameattached", _on_frame_attached)
+        page._human_frame_listener_attached = True
+
     for frame in _iter_frames(page):
         _patch_single_frame_async(frame, page, cfg, cursor, raw_mouse, raw_keyboard, originals)
 
@@ -2801,7 +2825,6 @@ def _patch_single_frame_async(
 ) -> None:
     if getattr(frame, "_human_patched", False):
         return
-    frame._human_patched = True
 
     # Frame-scoped resolution (async): humanize via ``frame.locator(selector)`` so
     # the selector resolves in the sub-frame's own document, while the mouse stays
@@ -3006,6 +3029,7 @@ def _patch_single_frame_async(
     _patch_frame_element_handles_async(
         frame, page, cfg, cursor, raw_mouse, raw_keyboard, originals, stealth_world, cdp_session_holder
     )
+    frame._human_patched = True
 
 
 def _patch_frame_element_handles_async(

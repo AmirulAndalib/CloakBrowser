@@ -23,15 +23,14 @@
  */
 
 import type { Browser, BrowserContext, Page, Frame, CDPSession } from 'playwright-core';
-import { HumanConfig, HumanActionOptions, resolveConfig, mergeConfig, rand, randRange, sleep } from './config.js';
-import { RawMouse, RawKeyboard, humanMove, humanClick, clickTarget, humanIdle } from './mouse.js';
+import { type HumanConfig, type HumanActionOptions, mergeConfig, rand, randRange, sleep } from './config.js';
+import { type RawMouse, type RawKeyboard, humanMove, humanClick, clickTarget, humanIdle } from './mouse.js';
 import { humanType } from './keyboard.js';
-import { scrollToElement, humanScrollIntoView } from './scroll.js';
-import { patchPageElementHandles, patchFrameElementHandles, patchSingleElementHandle } from './elementhandle.js';
+import { scrollToElement } from './scroll.js';
+import { patchPageElementHandles, patchFrameElementHandles } from './elementhandle.js';
 import {
   ensureActionable, ensureStable, checkPointerEvents,
   CHECKS_CLICK, CHECKS_HOVER, CHECKS_INPUT, CHECKS_FOCUS, CHECKS_CHECK,
-  type CheckName,
 } from './actionability.js';
 
 export { HumanConfig, resolveConfig, mergeConfig } from './config.js';
@@ -271,7 +270,9 @@ function patchPage(page: Page, cfg: HumanConfig, cursor: CursorState): void {
     if (!cdpSession) {
       try {
         cdpSession = await stealth.getCdpSession();
-      } catch {}
+      } catch (error) {
+        console.error('[cloakbrowser] Failed to create humanize CDP session:', error);
+      }
     }
     return cdpSession;
   };
@@ -584,7 +585,7 @@ function patchPage(page: Page, cfg: HumanConfig, cursor: CursorState): void {
   (page as any).clear = humanClearFn;
 
   // --- mouse patches ---
-  page.mouse.move = async (x: number, y: number, options?: {
+  page.mouse.move = async (x: number, y: number, _options?: {
     steps?: number;
   }) => {
     await ensureCursorInit();
@@ -593,7 +594,7 @@ function patchPage(page: Page, cfg: HumanConfig, cursor: CursorState): void {
     cursor.y = y;
   };
 
-  page.mouse.click = async (x: number, y: number, options?: {
+  page.mouse.click = async (x: number, y: number, _options?: {
     button?: 'left' | 'right' | 'middle';
     clickCount?: number;
     delay?: number;
@@ -606,7 +607,7 @@ function patchPage(page: Page, cfg: HumanConfig, cursor: CursorState): void {
   };
 
   // --- keyboard patches ---
-  page.keyboard.type = async (text: string, options?: { delay?: number }) => {
+  page.keyboard.type = async (text: string, _options?: { delay?: number }) => {
     const cdp = await ensureCdp();
     await humanType(page, rawKb, text, cfg, cdp);
   };
@@ -657,10 +658,27 @@ function patchFrames(
   originals: any,
   stealth: StealthEval,
 ): void {
-  for (const frame of iterFrames(page)) {
+  const patchFrame = (frame: Frame): void => {
+    if ((frame as any)._humanPatched) return;
     patchSingleFrame(frame, page, cfg, cursor, raw, rawKb, originals, stealth);
-    // Patch frame-level ElementHandle selectors ($, $$, waitForSelector)
     patchFrameElementHandles(frame, page, cfg, cursor, raw, rawKb, originals, stealth);
+    (frame as any)._humanPatched = true;
+  };
+
+  if (!(page as any)._humanFrameListenerAttached) {
+    page.on('frameattached', (frame: Frame) => {
+      try {
+        patchFrame(frame);
+      } catch (error) {
+        console.error('[cloakbrowser] Failed to humanize dynamically attached frame:', error);
+        throw error;
+      }
+    });
+    (page as any)._humanFrameListenerAttached = true;
+  }
+
+  for (const frame of iterFrames(page)) {
+    patchFrame(frame);
   }
 }
 
@@ -692,9 +710,6 @@ function patchSingleFrame(
   originals: any,
   stealth: StealthEval,
 ): void {
-  if ((frame as any)._humanPatched) return;
-  (frame as any)._humanPatched = true;
-
   // Save originals for methods that need fallback
   const origFrameClick = frame.click.bind(frame);
   const origFrameDblclick = frame.dblclick.bind(frame);
@@ -704,7 +719,6 @@ function patchSingleFrame(
   const origFrameCheck = frame.check.bind(frame);
   const origFrameUncheck = frame.uncheck.bind(frame);
   const origFrameSelectOption = frame.selectOption.bind(frame);
-  const origFramePress = frame.press.bind(frame);
   const origFramePressSequentially = (frame as any).pressSequentially?.bind(frame);
   const origFrameTap = (frame as any).tap?.bind(frame);
   const origFrameDragAndDrop = frame.dragAndDrop.bind(frame);
@@ -885,7 +899,9 @@ function* iterFrames(page: Page): Generator<Frame> {
     for (const child of mainFrame.childFrames()) {
       yield child;
     }
-  } catch {}
+  } catch (error) {
+    console.error('[cloakbrowser] Failed to enumerate page frames:', error);
+  }
 }
 
 

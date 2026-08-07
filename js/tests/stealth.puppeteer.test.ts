@@ -52,6 +52,7 @@ function buildMockPage(overrides: Record<string, any> = {}): any {
 
   const page: any = {
     evaluate: overrides.evaluate ?? vi.fn(async () => false),
+    on: vi.fn(),
     mouse: {
       move: vi.fn(async () => {}),
       down: vi.fn(async () => {}),
@@ -1518,6 +1519,41 @@ describe("Puppeteer: frame-level patching", () => {
     expect((childFrame as any)._humanPatched).toBe(true);
   });
 
+  it("dynamically attached frames are patched once", async () => {
+    const { patchPage } = await import("../src/human-puppeteer/index.js");
+
+    const page = buildMockPage();
+    const cfg = resolveConfig("default");
+    const cursor = { x: 0, y: 0, initialized: false };
+    patchPage(page as any, cfg, cursor as any);
+    await page.goto("https://example.com");
+
+    expect(page.on).toHaveBeenCalledTimes(1);
+    const [eventName, handler] = page.on.mock.calls[0];
+    expect(eventName).toBe("frameattached");
+
+    const attachedFrame: any = {
+      click: vi.fn(async () => {}),
+      hover: vi.fn(async () => {}),
+      type: vi.fn(async () => {}),
+      select: vi.fn(async () => []),
+      focus: vi.fn(async () => {}),
+      tap: vi.fn(async () => {}),
+      $: vi.fn(async () => null),
+      $$: vi.fn(async () => []),
+      waitForSelector: vi.fn(async () => null),
+      childFrames: vi.fn(() => []),
+    };
+    const originalClick = attachedFrame.click;
+    handler(attachedFrame);
+    const patchedClick = attachedFrame.click;
+    handler(attachedFrame);
+
+    expect(attachedFrame._humanPatched).toBe(true);
+    expect(patchedClick).not.toBe(originalClick);
+    expect(attachedFrame.click).toBe(patchedClick);
+  });
+
   it("frame.focus is patched to delegate to page.focus", async () => {
     const { patchPage } = await import("../src/human-puppeteer/index.js");
 
@@ -1943,14 +1979,14 @@ describeIfSlow("Puppeteer stealth browser: no evaluate leak on click", () => {
     await page.evaluate(() => {
       (window as any).__evalLeaks = [];
       const origQS = document.querySelector.bind(document);
-      document.querySelector = function (sel: string) {
+      document.querySelector = ((sel: string) => {
         try { throw new Error(); } catch (e: any) {
           if (e.stack && e.stack.includes(':302:')) {
             (window as any).__evalLeaks.push(sel);
           }
         }
         return origQS(sel);
-      } as any;
+      }) as any;
     });
 
     await page.click('#searchInput');

@@ -191,10 +191,9 @@ class TestBezierMath:
 
 class TestAsyncCompat:
     def test_async_modules_import(self):
-        from cloakbrowser.human.mouse_async import AsyncRawMouse, async_human_move
-        from cloakbrowser.human.keyboard_async import AsyncRawKeyboard, async_human_type
+        from cloakbrowser.human.mouse_async import async_human_move
+        from cloakbrowser.human.keyboard_async import async_human_type
         from cloakbrowser.human.scroll_async import async_scroll_to_element
-        from cloakbrowser.human import patch_page_async, patch_browser_async, patch_context_async
         assert callable(async_human_move)
         assert callable(async_human_type)
         assert callable(async_scroll_to_element)
@@ -393,6 +392,81 @@ class TestFramePatching:
         for method in expected:
             fn = getattr(frame, method)
             assert not isinstance(fn, MagicMock), f"frame.{method} was not patched"
+
+    def test_sync_dynamically_attached_frame_patched_once(self):
+        from cloakbrowser.human import _patch_frames_sync, _CursorState
+        from cloakbrowser.human.config import resolve_config
+
+        page = MagicMock()
+        page._human_frame_listener_attached = False
+        page._original_main_frame = True
+        page._stealth_world = None
+        main_frame = MagicMock()
+        main_frame._human_patched = True
+        main_frame.child_frames = []
+        page.main_frame = main_frame
+
+        cfg = resolve_config("default", None)
+        raw_mouse = MagicMock()
+        raw_keyboard = MagicMock()
+        originals = MagicMock()
+        _patch_frames_sync(
+            page, cfg, _CursorState(), raw_mouse, raw_keyboard, originals,
+        )
+        _patch_frames_sync(
+            page, cfg, _CursorState(), raw_mouse, raw_keyboard, originals,
+        )
+
+        page.on.assert_called_once()
+        event_name, handler = page.on.call_args.args
+        assert event_name == "frameattached"
+
+        attached_frame = MagicMock()
+        attached_frame._human_patched = False
+        handler(attached_frame)
+        patched_click = attached_frame.click
+        handler(attached_frame)
+
+        assert attached_frame._human_patched is True
+        assert attached_frame.click is patched_click
+
+    def test_async_dynamically_attached_frame_patched_once(self):
+        from cloakbrowser.human import _patch_frames_async, _CursorState
+        from cloakbrowser.human.config import resolve_config
+
+        page = MagicMock()
+        page._human_frame_listener_attached = False
+        page._original_main_frame = True
+        page._stealth_world = None
+        page._cdp_session_holder = [None]
+        main_frame = MagicMock()
+        main_frame._human_patched = True
+        main_frame.child_frames = []
+        page.main_frame = main_frame
+
+        cfg = resolve_config("default", None)
+        raw_mouse = MagicMock()
+        raw_keyboard = MagicMock()
+        originals = MagicMock()
+        _patch_frames_async(
+            page, cfg, _CursorState(), raw_mouse, raw_keyboard, originals,
+        )
+        _patch_frames_async(
+            page, cfg, _CursorState(), raw_mouse, raw_keyboard, originals,
+        )
+
+        page.on.assert_called_once()
+        event_name, handler = page.on.call_args.args
+        assert event_name == "frameattached"
+
+        attached_frame = MagicMock()
+        attached_frame._human_patched = False
+        handler(attached_frame)
+        patched_click = attached_frame.click
+        handler(attached_frame)
+
+        assert attached_frame._human_patched is True
+        assert attached_frame.click is patched_click
 
 
 # =========================================================================
@@ -851,7 +925,7 @@ def _iframe_server():
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, *a):
+        def log_message(self, format, *args):
             pass
 
     srv = socketserver.TCPServer(("127.0.0.1", 0), _H)
@@ -896,6 +970,27 @@ class TestBrowserIframeHumanize:
             finally:
                 browser.close()
 
+    def test_humanized_click_inside_dynamically_attached_iframe(self):
+        from cloakbrowser import launch
+        with _iframe_server() as url:
+            browser = launch(headless=True, humanize=True)
+            try:
+                page = browser.new_page()
+                page.goto(url, wait_until="networkidle")
+                with page.expect_event("frameattached") as event:
+                    page.evaluate("""() => {
+                        const iframe = document.createElement('iframe');
+                        iframe.src = '/child.html';
+                        document.body.appendChild(iframe);
+                    }""")
+                frame = event.value
+                frame.wait_for_load_state("domcontentloaded")
+                assert getattr(frame, "_human_patched", False)
+                frame.click("#btn", timeout=5000)
+                assert frame.locator("#btn").text_content() == "CLICKED"
+            finally:
+                browser.close()
+
     def test_native_control_click_inside_iframe(self):
         """Control: humanize=False must also work (parity)."""
         from cloakbrowser import launch
@@ -924,6 +1019,28 @@ class TestBrowserIframeHumanizeAsync:
                 frame = page.frame(name="myframe")
                 assert frame is not None
                 await frame.locator("#btn").click(timeout=5000)
+                assert await frame.locator("#btn").text_content() == "CLICKED"
+            finally:
+                await browser.close()
+
+    @pytest.mark.asyncio
+    async def test_async_humanized_click_inside_dynamically_attached_iframe(self):
+        from cloakbrowser import launch_async
+        with _iframe_server() as url:
+            browser = await launch_async(headless=True, humanize=True)
+            try:
+                page = await browser.new_page()
+                await page.goto(url, wait_until="networkidle")
+                async with page.expect_event("frameattached") as event:
+                    await page.evaluate("""() => {
+                        const iframe = document.createElement('iframe');
+                        iframe.src = '/child.html';
+                        document.body.appendChild(iframe);
+                    }""")
+                frame = await event.value
+                await frame.wait_for_load_state("domcontentloaded")
+                assert getattr(frame, "_human_patched", False)
+                await frame.click("#btn", timeout=5000)
                 assert await frame.locator("#btn").text_content() == "CLICKED"
             finally:
                 await browser.close()
@@ -1204,7 +1321,7 @@ class TestElementHandlePatchingSync:
     def test_element_handle_fill_clears_and_types(self):
         from cloakbrowser.human import _patch_single_element_handle_sync, _CursorState
         from cloakbrowser.human.config import resolve_config
-        from unittest.mock import MagicMock, call
+        from unittest.mock import MagicMock
 
         cfg = resolve_config("default", {"idle_between_actions": False, "mistype_chance": 0})
         cursor = _CursorState()
@@ -1315,7 +1432,7 @@ class TestElementHandlePatchingSync:
         assert result._human_patched is True
 
     def test_page_query_selector_patched(self):
-        from cloakbrowser.human import _patch_page_element_handles_sync, _patch_single_element_handle_sync, _CursorState
+        from cloakbrowser.human import _patch_page_element_handles_sync, _CursorState
         from cloakbrowser.human.config import resolve_config
         from unittest.mock import MagicMock
 
@@ -2098,7 +2215,7 @@ class TestScrollIntoViewIfNeeded:
             return ({"x": 100, "y": 100, "width": 50, "height": 30}, 200, 200, False)
 
         with patch.object(h, "human_scroll_into_view", side_effect=fake):
-            Locator.scroll_into_view_if_needed(
+            getattr(Locator, "scroll_into_view_if_needed")(
                 loc, human_config={"scroll_overshoot_chance": 0.5},
             )
 
@@ -2121,7 +2238,7 @@ class TestTimeoutBudget307:
         import cloakbrowser.human as h
         from cloakbrowser.human import _CursorState
         from cloakbrowser.human.config import resolve_config
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         TIMEOUT_MS = 500
         cfg = resolve_config("default", {"idle_between_actions": False})

@@ -104,6 +104,54 @@ public class PageWrapperTests
         Assert.All(human.Frames, f => Assert.IsType<HumanizedFrame>(f));
     }
 
+    [Theory]
+    [InlineData("FrameAttached")]
+    [InlineData("FrameDetached")]
+    [InlineData("FrameNavigated")]
+    public void Frame_events_wrap_payload_and_unsubscribe_exact_delegate(string eventName)
+    {
+        var (mouse, _) = Fake.Of<IMouse>();
+        var (keyboard, _) = Fake.Of<IKeyboard>();
+        var (rawFrame, _) = Fake.Of<IFrame>();
+        var (page, pageRec) = Fake.Of<IPage>();
+        pageRec.On("Mouse", mouse);
+        pageRec.On("Keyboard", keyboard);
+
+        var human = new HumanizedPage(page, new HumanCursor(page), FastConfig());
+        IFrame? observedFrame = null;
+        object? observedSender = null;
+        EventHandler<IFrame> handler = (sender, frame) =>
+        {
+            observedSender = sender;
+            observedFrame = frame;
+        };
+
+        switch (eventName)
+        {
+            case "FrameAttached": human.FrameAttached += handler; break;
+            case "FrameDetached": human.FrameDetached += handler; break;
+            case "FrameNavigated": human.FrameNavigated += handler; break;
+        }
+
+        var innerHandler = Assert.IsType<EventHandler<IFrame>>(
+            pageRec.Last($"add_{eventName}")!.Args[0]);
+        innerHandler(page, rawFrame);
+
+        Assert.Same(human, observedSender);
+        Assert.IsType<HumanizedFrame>(observedFrame);
+
+        switch (eventName)
+        {
+            case "FrameAttached": human.FrameAttached -= handler; break;
+            case "FrameDetached": human.FrameDetached -= handler; break;
+            case "FrameNavigated": human.FrameNavigated -= handler; break;
+        }
+
+        var removedHandler = Assert.IsType<EventHandler<IFrame>>(
+            pageRec.Last($"remove_{eventName}")!.Args[0]);
+        Assert.Same(innerHandler, removedHandler);
+    }
+
     // -----------------------------------------------------------------------
     // Selector action interception drives the humanize engine.
     // -----------------------------------------------------------------------

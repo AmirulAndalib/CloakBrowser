@@ -50,6 +50,7 @@ import type { Browser, Page, Frame, CDPSession, ElementHandle, BrowserContext } 
 import type { HumanConfig, HumanActionOptions } from '../human/config.js';
 import { mergeConfig, rand, randRange, sleep } from '../human/config.js';
 import { type RawMouse, type RawKeyboard, humanMove, humanClick, clickTarget, humanIdle } from '../human/mouse.js';
+import { pressWithDelay } from '../human/keyboard.js';
 import { humanType } from './keyboard.js';
 import { scrollToElement, humanScrollIntoView, smoothWheel } from './scroll.js';
 
@@ -500,11 +501,9 @@ function patchPage(page: Page, cfg: HumanConfig, cursor: CursorState): void {
     await humanType(page, rawKb, text, cfg, cdp);
   };
 
-  page.keyboard.press = async (key: any, _options?: { delay?: number }) => {
+  page.keyboard.press = async (key: any, options?: { delay?: number }) => {
     await sleep(rand(20, 60));
-    await originals.keyboardDown(key as any);
-    await sleep(randRange(cfg.key_hold));
-    await originals.keyboardUp(key as any);
+    await pressWithDelay(originals.keyboardPress, key, options, randRange(cfg.key_hold));
   };
 
   page.keyboard.down = async (key: any) => {
@@ -736,11 +735,9 @@ function patchSingleElementHandle(
 
   // --- el.press() ---
   if (origElPress) {
-    (el as any).press = async (key: string, _options?: { delay?: number }) => {
+    (el as any).press = async (key: string, options?: { delay?: number }) => {
       await sleep(rand(20, 60));
-      await originals.keyboardDown(key as any);
-      await sleep(randRange(cfg.key_hold));
-      await originals.keyboardUp(key as any);
+      await pressWithDelay(originals.keyboardPress, key, options, randRange(cfg.key_hold));
     };
   }
 

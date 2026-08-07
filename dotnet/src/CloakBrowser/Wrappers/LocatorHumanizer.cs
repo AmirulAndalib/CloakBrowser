@@ -211,13 +211,14 @@ internal static class LocatorHumanizer
         await TypeAsync(locator, cursor, cfg, timeout, force, text, selector).ConfigureAwait(false);
 
     public static async Task PressAsync(
-        ILocator locator, HumanCursor cursor, HumanConfig cfg, double timeout, bool force, string key, string? selector = null)
+        ILocator locator, HumanCursor cursor, HumanConfig cfg, double timeout, bool force,
+        string key, float? delay = null, string? selector = null)
     {
         double deadline = System.Environment.TickCount64 + timeout;
         if (!await IsFocusedAsync(locator, cursor, selector).ConfigureAwait(false))
             await ClickAsync(locator, cursor, cfg, RemainingMs(deadline), force, selector).ConfigureAwait(false);
         await HumanRandom.SleepMsAsync(HumanRandom.Rand(50, 150)).ConfigureAwait(false);
-        await cursor.PressAsync(key).ConfigureAwait(false);
+        await cursor.PressAsync(key, delay).ConfigureAwait(false);
     }
 
     /// <summary>

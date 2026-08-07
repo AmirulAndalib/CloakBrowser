@@ -121,8 +121,8 @@ public static class Humanize
 }
 
 /// <summary>
-/// Shared helpers for reading Force/Timeout out of the per-action Playwright option
-/// objects, which all expose <c>Force</c> and <c>Timeout</c> but have no common base.
+/// Shared helpers for reading Force/Timeout/Delay out of per-action Playwright option
+/// objects, which expose these properties but have no common base.
 /// </summary>
 internal static class OptionReader
 {
@@ -133,5 +133,11 @@ internal static class OptionReader
     {
         var v = options?.GetType().GetProperty("Timeout")?.GetValue(options);
         return v is float f ? f : v is double d ? d : 30000;
+    }
+
+    public static float? Delay(object? options)
+    {
+        var v = options?.GetType().GetProperty("Delay")?.GetValue(options);
+        return v is float f ? f : v is double d ? (float)d : null;
     }
 }

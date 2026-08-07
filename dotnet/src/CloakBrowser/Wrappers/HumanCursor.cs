@@ -93,7 +93,8 @@ internal sealed class HumanCursor
 
     public Task SelectAllAsync() => _page.Keyboard.PressAsync(SelectAll);
 
-    public Task PressAsync(string key) => _page.Keyboard.PressAsync(key);
+    public Task PressAsync(string key, float? delay = null) =>
+        HumanKeyboard.PressAsync(_page.Keyboard, key, delay);
 
     public Task HumanTypeAsync(string text, HumanConfig cfg) =>
         HumanKeyboard.HumanTypeAsync(_evaluator, _rawKeyboard, text, cfg, _cdpSession);

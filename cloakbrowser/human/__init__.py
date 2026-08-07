@@ -42,6 +42,16 @@ from .actionability_async import (
 
 _SELECT_ALL = "Meta+a" if sys.platform == "darwin" else "Control+a"
 
+
+def _keyboard_press_kwargs(kwargs: dict[str, Any], default_delay: Optional[float] = None) -> dict[str, Any]:
+    """Return only options accepted by Playwright's Keyboard.press()."""
+    if "delay" in kwargs:
+        return {"delay": kwargs["delay"]}
+    if default_delay is not None:
+        return {"delay": default_delay}
+    return {}
+
+
 __all__ = [
     "patch_browser", "patch_context", "patch_page",
     "patch_browser_async", "patch_context_async", "patch_page_async",
@@ -564,7 +574,7 @@ def _patch_locator_class_sync():
             if not _is_selector_focused(tgt, selector):
                 tgt.click(selector, **fwd)
             sleep_ms(rand(50, 150))
-            self.page.keyboard.press(key)
+            self.page.keyboard.press(key, **_keyboard_press_kwargs(kwargs))
         else:
             _orig_press(self, key, **kwargs)
 
@@ -886,7 +896,7 @@ def _patch_locator_class_async():
             if not await _async_is_selector_focused(tgt, selector):
                 await tgt.click(selector, **fwd)
             await async_sleep_ms(rand(50, 150))
-            await self.page.keyboard.press(key)
+            await self.page.keyboard.press(key, **_keyboard_press_kwargs(kwargs))
         else:
             await _orig_press(self, key, **kwargs)
 
@@ -1259,7 +1269,7 @@ def patch_page(page: Any, cfg: HumanConfig, cursor: _CursorState) -> None:
         if not _is_selector_focused(page, selector):
             _human_click(selector, _skip_checks=True, timeout=_remaining_ms(), force=force, human_config=kwargs.get("human_config"))
         sleep_ms(rand(50, 150))
-        originals.keyboard_press(key)
+        originals.keyboard_press(key, **_keyboard_press_kwargs(kwargs))
 
     def _human_mouse_move(x: float, y: float, **kwargs: Any) -> None:
         _ensure_cursor_init()
@@ -1547,9 +1557,10 @@ def _patch_single_element_handle_sync(
     # --- el.press() ---
     def _human_el_press(key: str, **kwargs: Any) -> None:
         sleep_ms(rand(20, 60))
-        originals.keyboard_down(key)
-        sleep_ms(rand_range(cfg.key_hold))
-        originals.keyboard_up(key)
+        originals.keyboard_press(
+            key,
+            **_keyboard_press_kwargs(kwargs, default_delay=rand_range(cfg.key_hold)),
+        )
 
     # --- el.select_option() ---
     def _human_el_select_option(value: Any = None, **kwargs: Any) -> Any:
@@ -1904,7 +1915,7 @@ def _patch_single_frame_sync(
         if not _frame_is_focused(selector):
             _frame_click(selector, **kwargs)
         sleep_ms(rand(50, 150))
-        originals.keyboard_press(key)
+        originals.keyboard_press(key, **_keyboard_press_kwargs(kwargs))
 
     def _frame_clear(selector: str, **kwargs: Any) -> None:
         if not _frame_is_focused(selector):
@@ -2317,7 +2328,7 @@ def patch_page_async(page: Any, cfg: HumanConfig, cursor: _CursorState) -> None:
         if not await _async_is_selector_focused(page, selector):
             await _human_click(selector, _skip_checks=True, timeout=_remaining_ms(), force=force, human_config=kwargs.get("human_config"))
         await async_sleep_ms(rand(50, 150))
-        await originals.keyboard_press(key)
+        await originals.keyboard_press(key, **_keyboard_press_kwargs(kwargs))
 
     async def _human_select_option(selector: str, value: Any = None, **kwargs: Any) -> Any:
         force = kwargs.get("force", False)
@@ -2622,9 +2633,10 @@ def _patch_single_element_handle_async(
     # --- el.press() ---
     async def _human_el_press(key: str, **kwargs: Any) -> None:
         await async_sleep_ms(rand(20, 60))
-        await originals.keyboard_down(key)
-        await async_sleep_ms(rand_range(cfg.key_hold))
-        await originals.keyboard_up(key)
+        await originals.keyboard_press(
+            key,
+            **_keyboard_press_kwargs(kwargs, default_delay=rand_range(cfg.key_hold)),
+        )
 
     # --- el.select_option() ---
     async def _human_el_select_option(value: Any = None, **kwargs: Any) -> Any:
@@ -2982,7 +2994,7 @@ def _patch_single_frame_async(
         if not await _frame_is_focused(selector):
             await _frame_click(selector, **kwargs)
         await async_sleep_ms(rand(50, 150))
-        await originals.keyboard_press(key)
+        await originals.keyboard_press(key, **_keyboard_press_kwargs(kwargs))
 
     async def _frame_clear(selector: str, **kwargs: Any) -> None:
         if not await _frame_is_focused(selector):

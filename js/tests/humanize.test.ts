@@ -381,6 +381,60 @@ describe("patchPage press focus", () => {
   });
 });
 
+describe("press delay forwarding", () => {
+  it("page.press forwards delay to keyboard.press", async () => {
+    const { patchPage } = await import("../src/human/index.js");
+    const page = buildMockPage({ evaluate: async () => true });
+    const originalKeyboardPress = page.keyboard.press;
+
+    patchPage(
+      page,
+      resolveConfig("default", { idle_between_actions: false }),
+      { x: 50, y: 50, initialized: true },
+    );
+    await page.press("#field", "Control+V", { delay: 300 });
+
+    expect(originalKeyboardPress).toHaveBeenCalledWith("Control+V", { delay: 300 });
+  });
+
+  it("frame.press forwards delay to keyboard.press", async () => {
+    const { patchPage } = await import("../src/human/index.js");
+    const childFrame = buildMockFrame();
+    const mainFrame = { ...buildMockFrame(), childFrames: vi.fn(() => [childFrame]) };
+    const page = buildMockPage({ mainFrameReturn: mainFrame });
+    const originalKeyboardPress = page.keyboard.press;
+
+    patchPage(
+      page,
+      resolveConfig("default", { idle_between_actions: false }),
+      { x: 50, y: 50, initialized: true },
+    );
+    await childFrame.press("#field", "Control+V", { delay: 300 });
+
+    expect(originalKeyboardPress).toHaveBeenCalledWith("Control+V", { delay: 300 });
+  });
+
+  it("ElementHandle.press forwards delay to keyboard.press", async () => {
+    const { patchSingleElementHandle } = await import("../src/human/elementhandle.js");
+    const keyboardPress = vi.fn(async () => {});
+    const element = buildMockElementHandle();
+
+    patchSingleElementHandle(
+      element,
+      buildMockPage(),
+      resolveConfig("default", { idle_between_actions: false }),
+      { x: 50, y: 50, initialized: true },
+      { move: vi.fn(), down: vi.fn(), up: vi.fn(), wheel: vi.fn() },
+      { down: vi.fn(), up: vi.fn(), type: vi.fn(), insertText: vi.fn() },
+      { keyboardPress, keyboardDown: vi.fn(), keyboardUp: vi.fn() },
+      null,
+    );
+    await element.press("Control+V", { delay: 300 });
+
+    expect(keyboardPress).toHaveBeenCalledWith("Control+V", { delay: 300 });
+  });
+});
+
 // =========================================================================
 // patchPage behavioral: frame patching
 // =========================================================================

@@ -284,9 +284,11 @@ class TestFocusCheck:
             loc.page = page
             loc._impl_obj = MagicMock()
             loc._impl_obj._selector = "#test"
-            Locator.press(loc, "Enter")
+            loc._impl_obj._frame = None
+            Locator.press(loc, "Enter", delay=300)
 
         page.click.assert_not_called()
+        page.keyboard.press.assert_called_once_with("Enter", delay=300)
 
     def test_press_clicks_when_not_focused(self):
         _ensure_locator_patched()
@@ -307,6 +309,184 @@ class TestFocusCheck:
         page.click.assert_called_with("#test")
 
 
+class TestPressDelayForwarding:
+    @pytest.mark.asyncio
+    async def test_async_locator_press_forwards_delay(self):
+        import cloakbrowser.human as h
+        from playwright.async_api._generated import Locator as AsyncLocator
+        from unittest.mock import AsyncMock, patch
+
+        h._locator_async_patched = False
+        h._patch_locator_class_async()
+
+        page = MagicMock()
+        page._original = MagicMock()
+        page._human_cfg = MagicMock()
+        page._human_cfg.idle_between_actions = False
+        page.keyboard.press = AsyncMock()
+        locator = MagicMock()
+        locator.page = page
+        locator._impl_obj = MagicMock()
+        locator._impl_obj._selector = "#field"
+        locator._impl_obj._frame = None
+
+        with patch.object(h, "_async_is_selector_focused", new=AsyncMock(return_value=True)), \
+             patch.object(h, "async_sleep_ms", new=AsyncMock()):
+            await AsyncLocator.press(locator, "Control+V", delay=300)
+
+        page.keyboard.press.assert_awaited_once_with("Control+V", delay=300)
+
+    @staticmethod
+    def _config_and_cursor():
+        from cloakbrowser.human import _CursorState
+        from cloakbrowser.human.config import resolve_config
+
+        cfg = resolve_config("default", {"idle_between_actions": False})
+        cursor = _CursorState()
+        cursor.initialized = True
+        return cfg, cursor
+
+    @staticmethod
+    def _sync_originals():
+        originals = MagicMock()
+        originals.keyboard_press = MagicMock()
+        return originals
+
+    @staticmethod
+    def _sync_frame(focused=True):
+        frame = MagicMock()
+        frame._human_patched = False
+        locator = MagicMock()
+        locator.first.evaluate = MagicMock(return_value=focused)
+        frame.locator.return_value = locator
+        return frame
+
+    def test_page_press_forwards_delay(self):
+        import cloakbrowser.human as h
+        from unittest.mock import patch
+
+        cfg, cursor = self._config_and_cursor()
+        page = MagicMock()
+        page.mouse = MagicMock()
+        page.keyboard = MagicMock()
+        original_press = page.keyboard.press
+        page.context.new_cdp_session.side_effect = RuntimeError("no cdp")
+        page.main_frame = self._sync_frame()
+        page.main_frame.child_frames = []
+
+        with patch.object(h, "ensure_actionable"), \
+             patch.object(h, "_is_selector_focused", return_value=True), \
+             patch.object(h, "sleep_ms"):
+            h.patch_page(page, cfg, cursor)
+            page.press("#field", "Control+V", delay=300)
+
+        original_press.assert_called_once_with("Control+V", delay=300)
+
+    def test_frame_press_forwards_delay(self):
+        import cloakbrowser.human as h
+        from unittest.mock import patch
+
+        cfg, cursor = self._config_and_cursor()
+        originals = self._sync_originals()
+        frame = self._sync_frame()
+        page = MagicMock()
+        page._stealth_world = None
+
+        with patch.object(h, "sleep_ms"):
+            h._patch_single_frame_sync(
+                frame, page, cfg, cursor, MagicMock(), MagicMock(), originals
+            )
+            frame.press("#field", "Control+V", delay=300)
+
+        originals.keyboard_press.assert_called_once_with("Control+V", delay=300)
+
+    def test_element_handle_press_forwards_delay(self):
+        import cloakbrowser.human as h
+        from unittest.mock import patch
+
+        cfg, cursor = self._config_and_cursor()
+        originals = self._sync_originals()
+        element = MagicMock()
+        element._human_patched = False
+
+        with patch.object(h, "sleep_ms"):
+            h._patch_single_element_handle_sync(
+                element, MagicMock(), cfg, cursor, MagicMock(), MagicMock(),
+                originals, None, None,
+            )
+            element.press("Control+V", delay=300)
+
+        originals.keyboard_press.assert_called_once_with("Control+V", delay=300)
+
+    @pytest.mark.asyncio
+    async def test_async_page_press_forwards_delay(self):
+        import cloakbrowser.human as h
+        from unittest.mock import AsyncMock, patch
+
+        cfg, cursor = self._config_and_cursor()
+        page = MagicMock()
+        page.mouse = MagicMock()
+        page.keyboard = MagicMock()
+        page.keyboard.press = AsyncMock()
+        original_press = page.keyboard.press
+        page.context.new_cdp_session = AsyncMock(side_effect=RuntimeError("no cdp"))
+        page.main_frame = MagicMock()
+        page.main_frame._human_patched = True
+        page.main_frame.child_frames = []
+
+        with patch.object(h, "async_ensure_actionable", new=AsyncMock()), \
+             patch.object(h, "_async_is_selector_focused", new=AsyncMock(return_value=True)), \
+             patch.object(h, "async_sleep_ms", new=AsyncMock()):
+            h.patch_page_async(page, cfg, cursor)
+            await page.press("#field", "Control+V", delay=300)
+
+        original_press.assert_awaited_once_with("Control+V", delay=300)
+
+    @pytest.mark.asyncio
+    async def test_async_frame_press_forwards_delay(self):
+        import cloakbrowser.human as h
+        from unittest.mock import AsyncMock, patch
+
+        cfg, cursor = self._config_and_cursor()
+        originals = MagicMock()
+        originals.keyboard_press = AsyncMock()
+        frame = MagicMock()
+        frame._human_patched = False
+        locator = MagicMock()
+        locator.first.evaluate = AsyncMock(return_value=True)
+        frame.locator.return_value = locator
+        page = MagicMock()
+        page._stealth_world = None
+
+        with patch.object(h, "async_sleep_ms", new=AsyncMock()):
+            h._patch_single_frame_async(
+                frame, page, cfg, cursor, MagicMock(), MagicMock(), originals
+            )
+            await frame.press("#field", "Control+V", delay=300)
+
+        originals.keyboard_press.assert_awaited_once_with("Control+V", delay=300)
+
+    @pytest.mark.asyncio
+    async def test_async_element_handle_press_forwards_delay(self):
+        import cloakbrowser.human as h
+        from unittest.mock import AsyncMock, patch
+
+        cfg, cursor = self._config_and_cursor()
+        originals = MagicMock()
+        originals.keyboard_press = AsyncMock()
+        element = MagicMock()
+        element._human_patched = False
+
+        with patch.object(h, "async_sleep_ms", new=AsyncMock()):
+            h._patch_single_element_handle_async(
+                element, MagicMock(), cfg, cursor, MagicMock(), MagicMock(),
+                originals, None, [None],
+            )
+            await element.press("Control+V", delay=300)
+
+        originals.keyboard_press.assert_awaited_once_with("Control+V", delay=300)
+
+
 # =========================================================================
 # 5. check/uncheck idle
 # =========================================================================
@@ -316,7 +496,7 @@ class TestCheckUncheckIdle:
         _ensure_locator_patched()
         from unittest.mock import MagicMock, patch as mock_patch
         from cloakbrowser.human.config import resolve_config
-        cfg = resolve_config("default", {"idle_between_actions": True, "idle_between_duration": [50, 100]})
+        cfg = resolve_config("default", {"idle_between_actions": True, "idle_between_duration": (50, 100)})
 
         page = MagicMock()
         page._original = MagicMock()
@@ -343,7 +523,7 @@ class TestCheckUncheckIdle:
         _ensure_locator_patched()
         from unittest.mock import MagicMock, patch as mock_patch
         from cloakbrowser.human.config import resolve_config
-        cfg = resolve_config("default", {"idle_between_actions": True, "idle_between_duration": [50, 100]})
+        cfg = resolve_config("default", {"idle_between_actions": True, "idle_between_duration": (50, 100)})
 
         page = MagicMock()
         page._original = MagicMock()

@@ -12,6 +12,9 @@ public sealed class HumanActionOptions
     /// <summary>Skip all actionability checks and motion guarantees when true.</summary>
     public bool Force { get; set; }
 
+    /// <summary>Delay in milliseconds between keydown and keyup for press actions.</summary>
+    public float? Delay { get; set; }
+
     /// <summary>Per-call config overrides (snake_case or PascalCase keys), merged on top of the page config.</summary>
     public IReadOnlyDictionary<string, object>? HumanConfig { get; set; }
 }
@@ -493,7 +496,7 @@ public sealed class HumanPage
         if (!await IsSelectorFocusedAsync(selector).ConfigureAwait(false))
             await ClickInternalAsync(selector, new HumanActionOptions { Timeout = RemainingMs(deadline), Force = force, HumanConfig = options?.HumanConfig }, skipChecks: true).ConfigureAwait(false);
         await HumanRandom.SleepMsAsync(HumanRandom.Rand(50, 150)).ConfigureAwait(false);
-        await _page.Keyboard.PressAsync(key).ConfigureAwait(false);
+        await HumanKeyboard.PressAsync(_page.Keyboard, key, options?.Delay).ConfigureAwait(false);
     }
 
     // -----------------------------------------------------------------------

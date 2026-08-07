@@ -181,6 +181,18 @@ public class PageWrapperTests
         Assert.Equal(1, mouseRec.CountOf("UpAsync"));
     }
 
+    [Fact]
+    public async Task PressAsync_selector_forwards_delay()
+    {
+        var (human, _, _) = BuildHumanizedPage();
+        var keyboard = (FakeProxy)(object)human.Original.Keyboard;
+
+        await human.PressAsync("#field", "Control+V", new PagePressOptions { Delay = 300 });
+
+        var options = Assert.IsType<KeyboardPressOptions>(keyboard.Last("PressAsync")!.Args[1]);
+        Assert.Equal(300, options.Delay);
+    }
+
     // -----------------------------------------------------------------------
     // Delegation: non-interaction members forward to the inner page.
     // -----------------------------------------------------------------------

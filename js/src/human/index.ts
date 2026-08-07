@@ -25,7 +25,7 @@
 import type { Browser, BrowserContext, Page, Frame, CDPSession } from 'playwright-core';
 import { type HumanConfig, type HumanActionOptions, mergeConfig, rand, randRange, sleep } from './config.js';
 import { type RawMouse, type RawKeyboard, humanMove, humanClick, clickTarget, humanIdle } from './mouse.js';
-import { humanType } from './keyboard.js';
+import { humanType, pressWithDelay } from './keyboard.js';
 import { scrollToElement } from './scroll.js';
 import { patchPageElementHandles, patchFrameElementHandles } from './elementhandle.js';
 import {
@@ -544,7 +544,7 @@ function patchPage(page: Page, cfg: HumanConfig, cursor: CursorState): void {
       await humanClickFn(selector, { _skipChecks: true, timeout: remainingMs(), force, human_config: options?.human_config } as any);
     }
     await sleep(rand(50, 150));
-    await originals.keyboardPress(key);
+    await pressWithDelay(originals.keyboardPress, key, options);
   };
 
   // --- pressSequentially ---
@@ -854,7 +854,7 @@ function patchSingleFrame(
       await frameClick(selector, options);
     }
     await sleep(rand(50, 150));
-    await originals.keyboardPress(key);
+    await pressWithDelay(originals.keyboardPress, key, options);
   };
 
   (frame as any).pressSequentially = async (selector: string, text: string, options?: HumanActionOptions) => {

@@ -1912,6 +1912,43 @@ describe("Puppeteer: cursor initialization", () => {
 
 
 // =========================================================================
+// Press delay forwarding
+// =========================================================================
+describe("Puppeteer: press delay forwarding", () => {
+  it("keyboard.press forwards delay to the original press", async () => {
+    const { patchPage } = await import("../src/human-puppeteer/index.js");
+    const page = buildMockPage();
+    const originalKeyboardPress = page.keyboard.press;
+
+    patchPage(
+      page,
+      resolveConfig("default", { idle_between_actions: false }),
+      { x: 50, y: 50, initialized: true },
+    );
+    await page.keyboard.press("Control+V", { delay: 300 });
+
+    expect(originalKeyboardPress).toHaveBeenCalledWith("Control+V", { delay: 300 });
+  });
+
+  it("ElementHandle.press forwards delay to the original keyboard press", async () => {
+    const { patchPage } = await import("../src/human-puppeteer/index.js");
+    const element = buildMockElementHandle();
+    const page = buildMockPage({ $: vi.fn(async () => element) });
+    const originalKeyboardPress = page.keyboard.press;
+
+    patchPage(
+      page,
+      resolveConfig("default", { idle_between_actions: false }),
+      { x: 50, y: 50, initialized: true },
+    );
+    const patchedElement = await page.$("#field");
+    await patchedElement.press("Control+V", { delay: 300 });
+
+    expect(originalKeyboardPress).toHaveBeenCalledWith("Control+V", { delay: 300 });
+  });
+});
+
+// =========================================================================
 // Page-level method replacement verification
 // =========================================================================
 describe("Puppeteer: all page methods are replaced", () => {

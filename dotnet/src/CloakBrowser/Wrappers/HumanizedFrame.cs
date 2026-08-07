@@ -60,7 +60,9 @@ public sealed partial class HumanizedFrame : IFrame
         LocatorHumanizer.TypeAsync(Loc(selector), _cursor, _cfg, OptionReader.Timeout(options), OptionReader.Force(options), text);
 
     public Task PressAsync(string selector, string key, FramePressOptions? options = null) =>
-        LocatorHumanizer.PressAsync(Loc(selector), _cursor, _cfg, OptionReader.Timeout(options), OptionReader.Force(options), key);
+        LocatorHumanizer.PressAsync(
+            Loc(selector), _cursor, _cfg, OptionReader.Timeout(options), OptionReader.Force(options),
+            key, OptionReader.Delay(options));
 
     public async Task CheckAsync(string selector, FrameCheckOptions? options = null)
     {

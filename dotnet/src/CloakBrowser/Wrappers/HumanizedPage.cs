@@ -47,6 +47,7 @@ public sealed partial class HumanizedPage : IPage
     {
         Timeout = OptionReader.Timeout(options),
         Force = OptionReader.Force(options),
+        Delay = OptionReader.Delay(options),
     };
 
     private ILocator Wrap(ILocator l) => Humanize.WrapLocator(l, _cursor, _cfg);

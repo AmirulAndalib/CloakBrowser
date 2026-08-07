@@ -67,7 +67,9 @@ public sealed partial class HumanizedLocator : ILocator
         LocatorHumanizer.PressSequentiallyAsync(_inner, _cursor, _cfg, OptionReader.Timeout(options), OptionReader.Force(options), text, _selector);
 
     public Task PressAsync(string key, LocatorPressOptions? options = null) =>
-        LocatorHumanizer.PressAsync(_inner, _cursor, _cfg, OptionReader.Timeout(options), OptionReader.Force(options), key, _selector);
+        LocatorHumanizer.PressAsync(
+            _inner, _cursor, _cfg, OptionReader.Timeout(options), OptionReader.Force(options),
+            key, OptionReader.Delay(options), _selector);
 
     public async Task CheckAsync(LocatorCheckOptions? options = null)
     {

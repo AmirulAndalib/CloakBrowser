@@ -917,12 +917,14 @@ function patchSingleFrame(
 
 
 function* iterFrames(page: Page): Generator<Frame> {
-  try {
-    const mainFrame = page.mainFrame();
-    yield mainFrame;
-    for (const child of mainFrame.childFrames()) {
-      yield child;
+  function* walk(frame: Frame): Generator<Frame> {
+    yield frame;
+    for (const child of frame.childFrames()) {
+      yield* walk(child);
     }
+  }
+  try {
+    yield* walk(page.mainFrame());
   } catch (error) {
     console.error('[cloakbrowser] Failed to enumerate page frames:', error);
   }

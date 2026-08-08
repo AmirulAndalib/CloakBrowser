@@ -2006,11 +2006,13 @@ def _patch_frame_element_handles_sync(
 
 
 def _iter_frames(page: Any):
+    def _walk(frame: Any):
+        yield frame
+        for child in frame.child_frames:
+            yield from _walk(child)
+
     try:
-        main = page.main_frame
-        yield main
-        for child in main.child_frames:
-            yield child
+        yield from _walk(page.main_frame)
     except Exception:
         pass
 
